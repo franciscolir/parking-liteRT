@@ -65,26 +65,14 @@ async function loadDetector() {
   detectorLoading = false;
 }
 
-// =============================== PLATE PATTERNS ===============================
-const PLATE_PATTERNS = [
-  // /^[A-Z]{3}\d{3}$/,          // ABC 123
-  // /^[A-Z]{2}\d{3}[A-Z]{2}$/,  // AB 123 CD (Mercosur)
-  // /^\d{3}[A-Z]{3}$/,          // 123 ABC
-  /^[A-Z]{4}\d{2}$/,          // ABCD 12 Modelo usado en chile
-  /^[A-Z]{2}\d{4}$/,          // AB 1234 Modelo usado en chile
-  // /^[A-Z]\d{3}[A-Z]{3}$/,     // A 123 BCD
-  // /^\d{3}[A-Z]{2}\d{2}$/,     // 123 AB 45
-];
-
+// =============================== PLATE PATTERNS (Chile) ===============================
+const PLATE_PATTERNS = [/^[A-Z]{4}\d{2}$/, /^[A-Z]{2}\d{4}$/];
 const OCR_CORRECTIONS = {
   '0': 'O', 'O': '0', '1': 'I', 'I': '1', '2': 'Z', 'Z': '2',
-  '5': 'S', 'S': '5', '8': 'B', 'B': '8', '6': 'G', 'G': '6',
-  '4': 'A', 'A': '4',
+  '5': 'S', 'S': '5', '8': 'B', 'B': '8', '6': 'G', 'G': '6', '4': 'A', 'A': '4',
 };
 
-function validatePlate(text) {
-  return PLATE_PATTERNS.some(p => p.test(text));
-}
+function validatePlate(text) { return PLATE_PATTERNS.some(p => p.test(text)); }
 
 function correctPlate(raw) {
   if (validatePlate(raw)) return raw;
@@ -102,7 +90,6 @@ function correctPlate(raw) {
 let mediaStream = null;
 let isScanning = false;
 let scanTimer = null;
-let ocrWorker = null;
 
 async function startCamera() {
   try {
@@ -121,10 +108,7 @@ async function startCamera() {
   }
 }
 
-function setStatus(msg) {
-  const el = document.getElementById('cam-status');
-  if (el) el.textContent = msg;
-}
+function setStatus(msg) { const el = document.getElementById('cam-status'); if (el) el.textContent = msg; }
 
 function setBadgeScanning(on) {
   const badge = document.getElementById('cam-status');
@@ -147,7 +131,6 @@ function stopCamera() {
 async function toggleScan() {
   const toggle = document.getElementById('scan-toggle');
   const label = document.getElementById('switch-label');
-
   if (isScanning) {
     isScanning = false;
     if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
@@ -158,12 +141,7 @@ async function toggleScan() {
     setStatus('Detenido');
     return;
   }
-
-  if (!mediaStream) {
-    const ok = await startCamera();
-    if (!ok) { toggle.checked = false; return; }
-  }
-
+  if (!mediaStream) { const ok = await startCamera(); if (!ok) { toggle.checked = false; return; } }
   isScanning = true;
   label.textContent = 'Apagar camara';
   setBadgeScanning(true);
@@ -172,26 +150,69 @@ async function toggleScan() {
   scanTimer = setInterval(() => captureAndDetect(), 2500);
 }
 
-// =============================== TESSERACT WORKER ===============================
+// =============================== ADAPTIVE THRESHOLD (integral images, O(n)) ===============================
+function adaptiveThreshold(canvas) {
+  const ctx = canvas.getContext('2d');
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const w = canvas.width, h = canvas.height, d = img.data;
+  const sat = new Uint32Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const g = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+      d[i] = d[i + 1] = d[i + 2] = g;
+      sat[(y + 1) * (w + 1) + (x + 1)] = g + sat[y * (w + 1) + (x + 1)] + sat[(y + 1) * (w + 1) + x] - sat[y * (w + 1) + x];
+    }
+  }
+  const half = Math.max(3, Math.round(Math.min(w, h) / 14) * 2 + 1);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const x1 = Math.max(0, x - half), y1 = Math.max(0, y - half);
+      const x2 = Math.min(w, x + half), y2 = Math.min(h, y + half);
+      const sum = sat[y2 * (w + 1) + x2] - sat[y1 * (w + 1) + x2] - sat[y2 * (w + 1) + x1] + sat[y1 * (w + 1) + x1];
+      const local = sum / ((x2 - x1) * (y2 - y1)) - 6;
+      const i = (y * w + x) * 4;
+      const v = d[i] > local ? 255 : 0;
+      d[i] = d[i + 1] = d[i + 2] = v;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// =============================== TESSERACT OCR ===============================
+let ocrWorker = null;
+
 async function getOCRWorker() {
   if (!ocrWorker) {
     ocrWorker = await Tesseract.createWorker('eng', 1, {
-      logger: m => {
-        if (m.status === 'recognizing text') setStatus('OCR ' + Math.round(m.progress * 100) + '%');
-      },
+      logger: m => { if (m.status === 'recognizing text') setStatus('OCR ' + Math.round(m.progress * 100) + '%'); },
     });
-    await ocrWorker.setParameters({
-      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-    });
+    await ocrWorker.setParameters({ tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' });
   }
   return ocrWorker;
 }
 
 async function runOCR(canvas) {
+  if (canvas.width < 20 || canvas.height < 20) return null;
   const w = await getOCRWorker();
-  const { data } = await w.recognize(canvas);
-  const text = data.text.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (text.length >= 5 && text.length <= 8) return correctPlate(text) || (validatePlate(text) ? text : null);
+
+  // Try raw crop
+  let { data } = await w.recognize(canvas);
+  let text = data.text.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (text.length >= 5 && text.length <= 8) { const r = correctPlate(text) || (validatePlate(text) ? text : null); if (r) return r; }
+
+  // Try scaled + adaptive threshold (best for plates)
+  const s = 3;
+  const p = document.createElement('canvas');
+  p.width = Math.max(60, Math.round(canvas.width * s));
+  p.height = Math.max(60, Math.round(canvas.height * s));
+  const pctx = p.getContext('2d');
+  pctx.drawImage(canvas, 0, 0, p.width, p.height);
+  adaptiveThreshold(p);
+
+  ({ data } = await w.recognize(p));
+  text = data.text.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (text.length >= 5 && text.length <= 8) { const r = correctPlate(text) || (validatePlate(text) ? text : null); if (r) return r; }
   const m = text.match(/[A-Z0-9]{5,8}/);
   if (m) return correctPlate(m[0]) || (validatePlate(m[0]) ? m[0] : null);
   return null;
@@ -216,58 +237,27 @@ function cropCanvas(src, x, y, w, h) {
   return c;
 }
 
-function preprocessForOCR(canvas) {
-  const s = 2;
-  const out = document.createElement('canvas');
-  out.width = Math.max(50, Math.round(canvas.width * s));
-  out.height = Math.max(50, Math.round(canvas.height * s));
-  const ctx = out.getContext('2d');
-  ctx.filter = 'contrast(200%) brightness(110%)';
-  ctx.drawImage(canvas, 0, 0, out.width, out.height);
-  ctx.filter = 'none';
-  return out;
-}
-
-async function detectPlateOnCrop(cropCanvas) {
-  if (cropCanvas.width < 30 || cropCanvas.height < 30) return null;
-
-  // Try raw crop
-  let plate = await runOCR(cropCanvas);
-  if (plate) return plate;
-
-  // Try preprocessed crop
-  const proc = preprocessForOCR(cropCanvas);
-  plate = await runOCR(proc);
-  if (plate) return plate;
-
-  return null;
-}
-
 async function captureAndDetect() {
   const video = document.getElementById('video');
   if (!video || !video.videoWidth) return;
-
   const frame = captureFrame();
   if (!frame) return;
 
   let plate = null;
-  const debug = document.getElementById('ocr-debug');
   const fw = frame.width, fh = frame.height;
 
-  // Approach 1: Direct OCR on center regions (close-up plates)
+  // Approach 1: Direct OCR on center regions
   const regions = [
-    { x: fw * 0.15, y: fh * 0.3,  w: fw * 0.7, h: fh * 0.4 },
-    { x: fw * 0.1,  y: fh * 0.45, w: fw * 0.8, h: fh * 0.35 },
-    { x: 0,         y: fh * 0.35, w: fw,       h: fh * 0.3 },
+    { x: fw * 0.1, y: fh * 0.3,  w: fw * 0.8, h: fh * 0.4 },
+    { x: fw * 0.1, y: fh * 0.45, w: fw * 0.8, h: fh * 0.35 },
+    { x: 0,        y: fh * 0.35, w: fw,       h: fh * 0.3 },
   ];
 
   for (const r of regions) {
     if (plate) break;
     setStatus('Buscando...');
     try {
-      const crop = cropCanvas(frame, r.x, r.y, r.w, r.h);
-      plate = await detectPlateOnCrop(crop);
-      if (plate && debug) debug.textContent = 'OK: ' + plate;
+      plate = await runOCR(cropCanvas(frame, r.x, r.y, r.w, r.h));
     } catch (e) { /* skip */ }
   }
 
@@ -279,80 +269,50 @@ async function captureAndDetect() {
       if (results && results.detections) {
         const vehicles = results.detections
           .filter(d => d.categories[0] && ['car', 'truck', 'bus', 'motorcycle'].includes(d.categories[0].categoryName) && d.categories[0].score > 0.35);
-
         for (const v of vehicles) {
           if (plate) break;
           const bb = v.boundingBox;
-          const bx = bb.originX, by = bb.originY, bw = bb.width, bh = bb.height;
-          const pc = cropCanvas(frame, bx + bw * 0.12, by + bh * 0.5, bw * 0.76, bh * 0.35);
-          plate = await detectPlateOnCrop(pc);
-          if (plate && debug) debug.textContent = 'VEH OK: ' + plate;
+          plate = await runOCR(cropCanvas(frame, bb.originX + bb.width * 0.12, bb.originY + bb.height * 0.5, bb.width * 0.76, bb.height * 0.35));
         }
       }
     } catch (e) { console.warn('liteRT error:', e); }
   }
 
-  if (plate) {
-    processPlate(plate);
-  } else {
-    setStatus('Sin deteccion');
-  }
+  if (plate) processPlate(plate);
+  else setStatus('Sin deteccion');
 }
 
 function processPlate(plate) {
   setStatus('Patente: ' + plate);
-
   const result = document.getElementById('cam-result');
   result.classList.remove('hidden', 'success', 'danger', 'warning');
   document.getElementById('result-plate').textContent = plate;
 
   let status, cssClass, ico;
-
-  if (DB.stolen.includes(plate)) {
-    status = '&#9888; VEHICULO DENUNCIADO';
-    cssClass = 'danger';
-    ico = '&#9888;';
-    scanCount.stolen++;
-  } else if (DB.registered.includes(plate)) {
-    status = '&#10003; Vehiculo registrado';
-    cssClass = 'success';
-    ico = '&#10003;';
-    scanCount.registered++;
-  } else {
-    status = '&#9888; No registrado';
-    cssClass = 'warning';
-    ico = '&#9888;';
-    scanCount.unknown++;
-  }
+  if (DB.stolen.includes(plate)) { status = '&#9888; VEHICULO DENUNCIADO'; cssClass = 'danger'; ico = '&#9888;'; scanCount.stolen++; }
+  else if (DB.registered.includes(plate)) { status = '&#10003; Vehiculo registrado'; cssClass = 'success'; ico = '&#10003;'; scanCount.registered++; }
+  else { status = '&#9888; No registrado'; cssClass = 'warning'; ico = '&#9888;'; scanCount.unknown++; }
 
   scanCount.total++;
   saveStats();
   updateStats();
-
   result.className = 'camera-result ' + cssClass;
   document.getElementById('result-icon').innerHTML = ico;
   document.getElementById('result-status').innerHTML = status;
-
   scanHistory.unshift({ plate, status: cssClass, time: Date.now() });
   if (scanHistory.length > 20) scanHistory.pop();
   saveHistory();
   updateHistory();
-
   if (navigator.vibrate) navigator.vibrate(100);
   document.getElementById('reg-plate').value = plate;
 }
 
-function clearCameraResult() {
-  document.getElementById('cam-result').classList.add('hidden');
-}
+function clearCameraResult() { document.getElementById('cam-result').classList.add('hidden'); }
 
 function updateHistory() {
   const list = document.getElementById('history-list');
   if (!list) return;
-  if (!scanHistory.length) {
-    list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">Sin detecciones recientes</div>';
-    return;
-  }
+  if (!scanHistory.length) { list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">Sin detecciones recientes</div>'; return; }
   list.innerHTML = scanHistory.slice(0, 10).map(h => {
     const sClass = h.status === 'success' ? 'reg' : h.status === 'danger' ? 'stolen' : 'unk';
     const sText = h.status === 'success' ? 'Registrada' : h.status === 'danger' ? 'Denunciada' : 'Desconocida';
@@ -375,23 +335,10 @@ function sendWhatsApp() {
   const incident = document.getElementById('reg-incident').value;
   const location = document.getElementById('reg-location').value.trim();
   const desc = document.getElementById('reg-desc').value.trim();
-
   if (!plate) { showToast('Ingrese una patente', 'error'); return; }
   if (!vehicle) { showToast('Seleccione tipo de vehiculo', 'error'); return; }
   if (!incident) { showToast('Seleccione tipo de incidente', 'error'); return; }
-
-  const msg = [
-    '\u{1F6A8} *REPORTE DE INCIDENTE*',
-    '',
-    '\u{1F539} *Patente:* ' + plate.toUpperCase(),
-    '\u{1F539} *Vehiculo:* ' + vehicle,
-    '\u{1F539} *Incidente:* ' + incident,
-    location ? '\u{1F539} *Ubicacion:* ' + location : '',
-    desc ? '\u{1F539} *Descripcion:* ' + desc : '',
-    '',
-    '\u{1F4F1} Enviado desde PlateDetect',
-  ].filter(Boolean).join('\n');
-
+  const msg = ['\u{1F6A8} *REPORTE DE INCIDENTE*', '', '\u{1F539} *Patente:* ' + plate.toUpperCase(), '\u{1F539} *Vehiculo:* ' + vehicle, '\u{1F539} *Incidente:* ' + incident, location ? '\u{1F539} *Ubicacion:* ' + location : '', desc ? '\u{1F539} *Descripcion:* ' + desc : '', '', '\u{1F4F1} Enviado desde PlateDetect'].filter(Boolean).join('\n');
   window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
   showToast('Abriendo WhatsApp...', 'success');
 }
@@ -432,7 +379,5 @@ document.addEventListener('DOMContentLoaded', function () {
   updateStats();
   updateHistory();
   renderContacts();
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  }
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 });
