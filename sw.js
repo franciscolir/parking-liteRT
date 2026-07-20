@@ -5,14 +5,16 @@ const ASSETS = [
   '/parking-liteRT/style.css',
   '/parking-liteRT/app.js',
   '/parking-liteRT/manifest.json',
-  '/parking-liteRT/icon-192.svg',
-  '/parking-liteRT/icon-512.svg',
 ];
 
 self.addEventListener('install', e => {
   self.skipWaiting();
   e.waitUntil(
-    caches.open(CACHE).then(cache => cache.addAll(ASSETS))
+    caches.open(CACHE).then(cache =>
+      Promise.allSettled(ASSETS.map(url =>
+        cache.add(url).catch(() => console.warn('SW: no se pudo cachear', url))
+      ))
+    )
   );
 });
 

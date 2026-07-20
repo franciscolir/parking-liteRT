@@ -7,7 +7,7 @@ const DB = {
   stolen: ['XYZ789', 'LMN456', 'WVU321'],
 };
 const PLATE_PATTERNS = [/^[A-Z]{4}\d{2}$/, /^[A-Z]{2}\d{4}$/];
-const VEHICLE_LABELS = ['car', 'truck', 'bus', 'motorcycle'];
+const VEHICLE_CLASS_IDS = new Set([3, 4, 6, 8]); // COCO: 3=car, 4=motorcycle, 6=bus, 8=truck
 const DEFAULT_CONTACTS = [
   { name: 'Policia', phone: '911', type: 'police', icon: '\u{1F6A8}' },
   { name: 'Emergencias', phone: '107', type: 'emergency', icon: '\u{1F691}' },
@@ -49,8 +49,9 @@ async function initLiteRT() {
 function tensorFromFrame(frame) {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = INPUT_SIZE;
-  canvas.getContext('2d').drawImage(frame, 0, 0, INPUT_SIZE, INPUT_SIZE);
-  const pixels = canvas.getContext('2d').getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(frame, 0, 0, INPUT_SIZE, INPUT_SIZE);
+  const pixels = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
   const data = new Float32Array(INPUT_SIZE * INPUT_SIZE * 3);
   for (let i = 0; i < INPUT_SIZE * INPUT_SIZE; i++) {
     data[i * 3] = pixels[i * 4] / 255;
@@ -86,8 +87,7 @@ async function detectVehicles(video) {
       const sc = scoreData[a * numClasses + c];
       if (sc > bestScore) { bestScore = sc; bestCls = c; }
     }
-    if (bestScore < 0.35 || bestCls < 0 || bestCls >= VEHICLE_LABELS.length) continue;
-    if (!VEHICLE_LABELS.some(l => l === VEHICLE_LABELS[bestCls])) continue;
+    if (bestScore < 0.35 || !VEHICLE_CLASS_IDS.has(bestCls)) continue;
 
     const ymin = boxData[a * 4], xmin = boxData[a * 4 + 1];
     const ymax = boxData[a * 4 + 2], xmax = boxData[a * 4 + 3];
@@ -116,7 +116,7 @@ async function detectVehicles(video) {
 
 // =============================== PLATE OCR (canvas-based, no Tesseract) ===============================
 function binarize(canvas) {
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const d = img.data;
   const sat = new Uint32Array((canvas.width + 1) * (canvas.height + 1));
@@ -143,7 +143,7 @@ function binarize(canvas) {
 }
 
 function verticalProjection(canvas) {
-  const img = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+  const img = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height);
   const proj = new Uint32Array(canvas.width);
   for (let x = 0; x < canvas.width; x++) {
     let count = 0;
@@ -171,7 +171,7 @@ function segmentChars(canvas) {
 }
 
 function charDensity(canvas, cx, cw) {
-  const img = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+  const img = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height);
   const zones = [];
   const zoneW = Math.max(1, Math.floor(cw / 3));
   const zoneH = Math.max(1, Math.floor(canvas.height / 4));
