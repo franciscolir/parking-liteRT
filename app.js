@@ -230,14 +230,26 @@ function matchChar(density) {
   return bestScore > 6 ? best : null;
 }
 
+function tick() { return new Promise(r => setTimeout(r, 0)); }
+
 function readPlate(canvas) {
   if (canvas.width < 40 || canvas.height < 20) return null;
 
+  // Limit input size for performance
+  let src = canvas;
+  if (canvas.width > 300 || canvas.height > 200) {
+    const r = Math.min(300 / canvas.width, 200 / canvas.height, 1);
+    src = document.createElement('canvas');
+    src.width = Math.round(canvas.width * r);
+    src.height = Math.round(canvas.height * r);
+    src.getContext('2d', { willReadFrequently: true }).drawImage(canvas, 0, 0, src.width, src.height);
+  }
+
   const s = 3;
   const scaled = document.createElement('canvas');
-  scaled.width = Math.max(60, Math.round(canvas.width * s));
-  scaled.height = Math.max(60, Math.round(canvas.height * s));
-  scaled.getContext('2d', { willReadFrequently: true }).drawImage(canvas, 0, 0, scaled.width, scaled.height);
+  scaled.width = Math.max(60, Math.round(src.width * s));
+  scaled.height = Math.max(60, Math.round(src.height * s));
+  scaled.getContext('2d', { willReadFrequently: true }).drawImage(src, 0, 0, scaled.width, scaled.height);
   binarize(scaled);
 
   const chars = segmentChars(scaled);
@@ -340,25 +352,30 @@ async function detect() {
   let plate = null;
   const fw = frame.width, fh = frame.height;
 
-  // Center regions
-  const regions = [
-    { x: fw * 0.1, y: fh * 0.3, w: fw * 0.8, h: fh * 0.4 },
-    { x: fw * 0.05, y: fh * 0.45, w: fw * 0.9, h: fh * 0.35 },
-  ];
-  for (const r of regions) {
+  // Scan smaller windows in center area (faster than full-frame crop)
+  const scanW = 240, scanH = 80;
+  for (let sy = 0; sy < 3; sy++) {
     if (plate) break;
-    setStatus('Buscando...');
-    try { plate = readPlate(crop(frame, r.x, r.y, r.w, r.h)); } catch (e) {}
+    for (let sx = 0; sx < 4; sx++) {
+      if (plate) break;
+      const rx = fw * 0.15 + sx * (fw * 0.7 / 4);
+      const ry = fh * 0.25 + sy * (fh * 0.4 / 3);
+      setStatus('Buscando...');
+      try { plate = readPlate(crop(frame, rx, ry, scanW, scanH)); } catch (e) {}
+      await tick();
+    }
   }
 
   // Vehicle detection via LiteRT.js
   if (!plate && litertReady) {
     try {
       setStatus('liteRT.js detectando...');
+      await tick();
       const vehicles = await detectVehicles(video);
       for (const v of vehicles) {
         if (plate) break;
         setStatus('Leyendo patente...');
+        await tick();
         plate = readPlate(crop(frame, v.x + v.w * 0.12, v.y + v.h * 0.5, v.w * 0.76, v.h * 0.35));
       }
     } catch (e) { console.warn('liteRT error:', e); }
