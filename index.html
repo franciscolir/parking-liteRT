@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>PlateDetect</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+:root {
+  --bg: #0b1121;
+  --surface: #131c31;
+  --card: #1a2744;
+  --primary: #3b82f6;
+  --primary-dark: #2563eb;
+  --accent: #06b6d4;
+  --text: #e2e8f0;
+  --text-muted: #94a3b8;
+  --success: #22c55e;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --radius: 12px;
+  --nav-h: 64px;
+  --safe-bottom: env(safe-area-inset-bottom,0px);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);touch-action:manipulation;-webkit-user-select:none;user-select:none}
+#app{height:100%;display:flex;flex-direction:column;max-width:480px;margin:0 auto;position:relative;overflow:hidden}
+.view{position:absolute;inset:0;bottom:calc(var(--nav-h) + var(--safe-bottom));opacity:0;visibility:hidden;overflow-y:auto;overflow-x:hidden;transition:opacity .25s,transform .25s;transform:translateY(12px);-webkit-overflow-scrolling:touch;scroll-behavior:smooth}
+.view.active{opacity:1;visibility:visible;transform:translateY(0);position:relative;z-index:1}
+.view::-webkit-scrollbar{width:4px}
+.view::-webkit-scrollbar-thumb{background:var(--card);border-radius:4px}
+
+/* NAV */
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:100;background:var(--surface);border-top:1px solid rgba(255,255,255,.06);padding-bottom:var(--safe-bottom);max-width:480px;margin:0 auto}
+.nav-inner{display:flex;height:var(--nav-h);align-items:stretch}
+.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;transition:background .15s;border:none;background:none;color:var(--text-muted);font-size:10px;font-family:inherit;padding:4px 0;position:relative}
+.nav-item:active{background:rgba(59,130,246,.1)}
+.nav-item.active{color:var(--primary)}
+.nav-item.active svg{filter:drop-shadow(0 0 6px rgba(59,130,246,.4))}
+.nav-item svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:stroke .2s}
+.nav-item span{font-weight:500;letter-spacing:.3px}
+
+/* HEADER */
+.view-header{padding:20px 20px 12px;display:flex;align-items:center;justify-content:space-between}
+.view-header h1{font-size:20px;font-weight:700;color:var(--text)}
+.view-header .badge{background:var(--primary);color:#fff;font-size:11px;padding:2px 10px;border-radius:20px;font-weight:600}
+
+/* CARDS */
+.card{background:var(--card);border-radius:var(--radius);padding:16px;margin:0 16px 12px;border:1px solid rgba(255,255,255,.06)}
+.card-title{font-size:13px;color:var(--text-muted);margin-bottom:6px;font-weight:500;text-transform:uppercase;letter-spacing:.5px}
+.card-value{font-size:22px;font-weight:700}
+.card-value.success{color:var(--success)}
+.card-value.danger{color:var(--danger)}
+.card-value.warning{color:var(--warning)}
+
+/* HOME */
+.home-hero{text-align:center;padding:32px 20px 20px}
+.home-hero .logo{width:64px;height:64px;background:linear-gradient(135deg,var(--primary),var(--accent));border-radius:18px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:30px;box-shadow:0 8px 32px rgba(59,130,246,.3)}
+.home-hero h2{font-size:24px;font-weight:800;margin-bottom:4px}
+.home-hero p{color:var(--text-muted);font-size:14px;line-height:1.5}
+.stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 16px 16px}
+.stat-card{background:var(--card);border-radius:var(--radius);padding:14px;text-align:center;border:1px solid rgba(255,255,255,.06)}
+.stat-card .num{font-size:24px;font-weight:800}
+.stat-card .label{font-size:11px;color:var(--text-muted);margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
+.stat-card:nth-child(1) .num{color:var(--primary)}
+.stat-card:nth-child(2) .num{color:var(--success)}
+.stat-card:nth-child(3) .num{color:var(--danger)}
+.stat-card:nth-child(4) .num{color:var(--warning)}
+.btn-primary{display:flex;align-items:center;justify-content:center;gap:8px;background:var(--primary);color:#fff;border:none;border-radius:var(--radius);padding:14px 24px;font-size:15px;font-weight:600;cursor:pointer;width:calc(100% - 32px);margin:8px 16px;font-family:inherit;transition:background .2s,transform .1s}
+.btn-primary:active{transform:scale(.97);background:var(--primary-dark)}
+.btn-primary svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2}
+
+/* CAMERA */
+.camera-container{position:relative;border-radius:var(--radius);overflow:hidden;margin:0 16px 12px;background:#000;aspect-ratio:4/3}
+.camera-container video{width:100%;height:100%;object-fit:cover;display:block}
+.camera-container .overlay{position:absolute;inset:0;pointer-events:none}
+.scan-frame{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:75%;height:35%;border:2px solid var(--primary);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.45)}
+.scan-frame::before{content:'';position:absolute;top:-2px;left:-2px;width:20px;height:20px;border-top:3px solid var(--accent);border-left:3px solid var(--accent);border-radius:2px}
+.scan-frame::after{content:'';position:absolute;bottom:-2px;right:-2px;width:20px;height:20px;border-bottom:3px solid var(--accent);border-right:3px solid var(--accent);border-radius:2px}
+.scan-line{position:absolute;left:12.5%;right:12.5%;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);top:32.5%;animation:scanMove 2s ease-in-out infinite;opacity:.7}
+@keyframes scanMove{0%,100%{top:32.5%}50%{top:62.5%}}
+.camera-controls{display:flex;gap:12px;margin:0 16px 12px;align-items:center}
+.camera-controls button{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;border:none;border-radius:var(--radius);padding:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .2s,transform .1s}
+.camera-controls button:active{transform:scale(.97)}
+.btn-scan{background:var(--primary);color:#fff}
+.btn-scan.scanning{background:var(--danger)}
+.btn-clear{background:var(--card);color:var(--text)}
+.camera-result{margin:0 16px 12px;padding:16px;border-radius:var(--radius);text-align:center;transition:all .3s}
+.camera-result.hidden{display:none}
+.camera-result .plate-number{font-size:28px;font-weight:800;letter-spacing:2px;margin-bottom:4px}
+.camera-result .plate-status{font-size:13px;font-weight:500}
+.camera-result .plate-icon{font-size:36px;margin-bottom:6px}
+.camera-result.success{background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3)}
+.camera-result.success .plate-number{color:var(--success)}
+.camera-result.danger{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3)}
+.camera-result.danger .plate-number{color:var(--danger)}
+.camera-result.warning{background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.3)}
+.camera-result.warning .plate-number{color:var(--warning)}
+.camera-history{margin:0 16px 12px}
+.camera-history h3{font-size:13px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+.history-item{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--card);border-radius:8px;margin-bottom:6px;font-size:13px;border:1px solid rgba(255,255,255,.04)}
+.history-item .h-plate{font-weight:700;letter-spacing:1px}
+.history-item .h-status{font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600}
+.history-item .h-status.reg{background:rgba(34,197,94,.2);color:var(--success)}
+.history-item .h-status.stolen{background:rgba(239,68,68,.2);color:var(--danger)}
+.history-item .h-status.unk{background:rgba(245,158,11,.2);color:var(--warning)}
+
+/* REGISTER */
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;font-weight:500;text-transform:uppercase;letter-spacing:.5px}
+.form-group input,.form-group select,.form-group textarea{width:100%;background:var(--surface);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:12px 14px;color:var(--text);font-size:14px;font-family:inherit;transition:border .2s;outline:none}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--primary)}
+.form-group textarea{resize:vertical;min-height:72px}
+.form-group input::placeholder,.form-group textarea::placeholder{color:var(--text-muted)}
+.form-group select{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
+.form-group select option{background:var(--surface);color:var(--text)}
+.btn-whatsapp{display:flex;align-items:center;justify-content:center;gap:8px;background:#25D366;color:#fff;border:none;border-radius:var(--radius);padding:14px 24px;font-size:15px;font-weight:600;cursor:pointer;width:100%;font-family:inherit;transition:background .2s,transform .1s;margin-top:4px}
+.btn-whatsapp:active{transform:scale(.97);background:#1da851}
+.btn-whatsapp svg{width:20px;height:20px}
+
+/* CALL */
+.contact-grid{display:grid;gap:10px;margin:0 16px 16px}
+.contact-card{background:var(--card);border-radius:var(--radius);padding:16px;display:flex;align-items:center;gap:14px;border:1px solid rgba(255,255,255,.06);cursor:pointer;transition:background .2s,transform .1s}
+.contact-card:active{transform:scale(.97);background:var(--surface)}
+.contact-card .avatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.contact-card .avatar.police{background:rgba(59,130,246,.2);color:var(--primary)}
+.contact-card .avatar.emergency{background:rgba(239,68,68,.2);color:var(--danger)}
+.contact-card .avatar.fire{background:rgba(245,158,11,.2);color:var(--warning)}
+.contact-card .avatar.hospital{background:rgba(34,197,94,.2);color:var(--success)}
+.contact-card .avatar.custom{background:rgba(6,182,212,.2);color:var(--accent)}
+.contact-card .info{flex:1}
+.contact-card .info .name{font-size:15px;font-weight:600}
+.contact-card .info .phone{font-size:12px;color:var(--text-muted);margin-top:1px}
+.contact-card .call-btn{width:40px;height:40px;border-radius:50%;background:var(--success);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background .2s,transform .1s;flex-shrink:0}
+.contact-card .call-btn:active{transform:scale(.9);background:#16a34a}
+.contact-card .call-btn svg{width:20px;height:20px;stroke:#fff;fill:none;stroke-width:2}
+
+/* TOAST */
+.toast{position:fixed;bottom:calc(var(--nav-h) + var(--safe-bottom) + 16px);left:50%;transform:translateX(-50%) translateY(80px);background:var(--surface);color:var(--text);padding:12px 20px;border-radius:var(--radius);font-size:13px;font-weight:500;z-index:200;opacity:0;transition:transform .3s,opacity .3s;border:1px solid rgba(255,255,255,.08);box-shadow:0 8px 32px rgba(0,0,0,.4);white-space:nowrap;max-width:90%;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.toast-success{border-color:var(--success)}
+.toast.toast-error{border-color:var(--danger)}
+
+/* Plate DB suggestion */
+.db-note{margin:8px 16px 16px;padding:12px;background:rgba(6,182,212,.1);border:1px solid rgba(6,182,212,.2);border-radius:8px;font-size:11px;color:var(--accent);line-height:1.5}
+
+@media(min-width:480px){#app{border-left:1px solid rgba(255,255,255,.06);border-right:1px solid rgba(255,255,255,.06)}}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- =============== VIEW: HOME =============== -->
+<div id="view-home" class="view active">
+  <div class="home-hero">
+    <div class="logo">&#128674;</div>
+    <h2>PlateDetect</h2>
+    <p>Lectura de patentes en vivo con detecci&oacute;n de veh&iacute;culos registrados y denunciados.</p>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="num" id="stat-total">0</div><div class="label">Escaneos</div></div>
+    <div class="stat-card"><div class="num" id="stat-reg">0</div><div class="label">Registradas</div></div>
+    <div class="stat-card"><div class="num" id="stat-stolen">0</div><div class="label">Denunciadas</div></div>
+    <div class="stat-card"><div class="num" id="stat-unknown">0</div><div class="label">Desconocidas</div></div>
+  </div>
+  <button class="btn-primary" onclick="navigate('camera')">
+    <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+    Iniciar escaneo
+  </button>
+
+  <div class="view-header"><h1>Base de Datos Local</h1></div>
+  <div class="card">
+    <div class="card-title">Patentes registradas</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+      <span style="background:rgba(34,197,94,.15);color:var(--success);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">ABC123</span>
+      <span style="background:rgba(34,197,94,.15);color:var(--success);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">DEF456</span>
+      <span style="background:rgba(34,197,94,.15);color:var(--success);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">GHI789</span>
+      <span style="background:rgba(34,197,94,.15);color:var(--success);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">JKL012</span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Patentes denunciadas</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+      <span style="background:rgba(239,68,68,.15);color:var(--danger);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">XYZ789</span>
+      <span style="background:rgba(239,68,68,.15);color:var(--danger);padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600">LMN456</span>
+    </div>
+  </div>
+  <div class="db-note">
+    &#128161; La base de datos se almacena en memoria (variable <strong>DB</strong>). 
+    Para persistencia real puedes usar <strong>localStorage</strong>, <strong>IndexedDB</strong> o sincronizar con un backend.
+  </div>
+  <div style="height:16px"></div>
+</div>
+
+<!-- =============== VIEW: CAMERA =============== -->
+<div id="view-camera" class="view">
+  <div class="view-header"><h1>Lector de Patentes</h1><span class="badge" id="cam-status">En espera</span></div>
+  <div class="camera-container" id="cam-container">
+    <video id="video" autoplay playsinline muted></video>
+    <div class="overlay">
+      <div class="scan-frame"></div>
+      <div class="scan-line"></div>
+    </div>
+  </div>
+  <div class="camera-controls">
+    <button class="btn-scan" id="btn-scan" onclick="toggleScan()">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
+      <span id="btn-scan-text">Escanear</span>
+    </button>
+    <button class="btn-clear" onclick="clearCameraResult()">Limpiar</button>
+  </div>
+  <div class="camera-result hidden" id="cam-result">
+    <div class="plate-icon" id="result-icon">&#9989;</div>
+    <div class="plate-number" id="result-plate">ABC123</div>
+    <div class="plate-status" id="result-status">Veh&iacute;culo registrado</div>
+  </div>
+  <div class="camera-history" id="cam-history">
+    <h3>&Uacute;ltimas detecciones</h3>
+    <div id="history-list"></div>
+  </div>
+  <div style="height:16px"></div>
+</div>
+
+<!-- =============== VIEW: REGISTER =============== -->
+<div id="view-register" class="view">
+  <div class="view-header"><h1>Reportar Incidente</h1></div>
+  <div class="card">
+    <div class="form-group">
+      <label>Patente</label>
+      <input type="text" id="reg-plate" placeholder="Ej: ABC123" maxlength="10" style="text-transform:uppercase;letter-spacing:2px;font-weight:700">
+    </div>
+    <div class="form-group">
+      <label>Tipo de veh&iacute;culo</label>
+      <select id="reg-vehicle">
+        <option value="">Seleccionar...</option>
+        <option>Auto</option>
+        <option>Camioneta</option>
+        <option>Moto</option>
+        <option>Cami&oacute;n</option>
+        <option>Utilitario</option>
+        <option>Otro</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Tipo de incidente</label>
+      <select id="reg-incident">
+        <option value="">Seleccionar...</option>
+        <option>Robo/Hurto</option>
+        <option>Conductor sospechoso</option>
+        <option>Accidente</option>
+        <option>Mal estacionado</option>
+        <option>Abanadono</option>
+        <option>Otro</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Ubicaci&oacute;n (opcional)</label>
+      <input type="text" id="reg-location" placeholder="Calle y n&uacute;mero, referencia">
+    </div>
+    <div class="form-group">
+      <label>Descripci&oacute;n adicional</label>
+      <textarea id="reg-desc" placeholder="Color, detalles, hora aproximada..."></textarea>
+    </div>
+    <button class="btn-whatsapp" onclick="sendWhatsApp()">
+      <svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>
+      Enviar por WhatsApp
+    </button>
+  </div>
+  <div style="height:16px"></div>
+</div>
+
+<!-- =============== VIEW: CALL =============== -->
+<div id="view-call" class="view">
+  <div class="view-header"><h1>Marcaci&oacute;n R&aacute;pida</h1></div>
+  <div class="contact-grid" id="contact-grid">
+    <!-- rendered by JS -->
+  </div>
+  <div class="card">
+    <div class="card-title">Agregar contacto</div>
+    <div class="form-group">
+      <label>Nombre</label>
+      <input type="text" id="new-contact-name" placeholder="Ej: Comisar&iacute;a">
+    </div>
+    <div class="form-group">
+      <label>Tel&eacute;fono</label>
+      <input type="tel" id="new-contact-phone" placeholder="Ej: 911">
+    </div>
+    <button class="btn-primary" onclick="addContact()" style="margin:0;width:100%">Agregar contacto</button>
+  </div>
+  <div style="height:16px"></div>
+</div>
+
+<!-- =============== TOAST =============== -->
+<div class="toast" id="toast"></div>
+
+<!-- =============== BOTTOM NAV =============== -->
+<nav class="bottom-nav">
+  <div class="nav-inner">
+    <button class="nav-item active" data-view="home" onclick="navigate('home')">
+      <svg viewBox="0 0 24 24"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 0 0 1 1h3m10-11l2 2m-2-2v10a1 1 0 0 1-1 1h-3m-6 0a1 1 0 0 0 1-1v-4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v4a1 1 0 0 0 1 1m-6 0h6"/></svg>
+      <span>Inicio</span>
+    </button>
+    <button class="nav-item" data-view="camera" onclick="navigate('camera')">
+      <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      <span>C&aacute;mara</span>
+    </button>
+    <button class="nav-item" data-view="register" onclick="navigate('register')">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      <span>Registro</span>
+    </button>
+    <button class="nav-item" data-view="call" onclick="navigate('call')">
+      <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+      <span>Llamada</span>
+    </button>
+  </div>
+</nav>
+
+</div>
+
+<script>
+// =============================== DATABASE ===============================
+const DB = {
+  registered: ['ABC123','DEF456','GHI789','JKL012','MNO345','PQR678','STU901'],
+  stolen: ['XYZ789','LMN456','WVU321'],
+};
+let scanHistory = JSON.parse(localStorage.getItem('plateHistory') || '[]');
+let scanCount = JSON.parse(localStorage.getItem('plateStats') || '{"total":0,"registered":0,"stolen":0,"unknown":0}');
+let contacts = JSON.parse(localStorage.getItem('contacts') || '[]');
+const defaultContacts = [
+  {name:'Polic&iacute;a',phone:'911',type:'police',icon:'&#128110;'},
+  {name:'Emergencias',phone:'107',type:'emergency',icon:'&#128657;'},
+  {name:'Bomberos',phone:'100',type:'fire',icon:'&#128293;'},
+  {name:'Hospital',phone:'108',type:'hospital',icon:'&#127973;'},
+];
+
+if (!contacts.length) contacts = JSON.parse(JSON.stringify(defaultContacts));
+
+function saveStats() { localStorage.setItem('plateStats',JSON.stringify(scanCount)); }
+function saveHistory() { localStorage.setItem('plateHistory',JSON.stringify(scanHistory)); }
+function saveContacts() { localStorage.setItem('contacts',JSON.stringify(contacts)); }
+
+// =============================== NAVIGATION ===============================
+function navigate(view) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const vEl = document.getElementById('view-'+view);
+  if (vEl) vEl.classList.add('active');
+  const nEl = document.querySelector(`.nav-item[data-view="${view}"]`);
+  if (nEl) nEl.classList.add('active');
+
+  if (view !== 'camera') stopCamera();
+  if (view === 'camera') updateHistory();
+  if (view === 'home') updateStats();
+  if (view === 'call') renderContacts();
+}
+
+// =============================== CAMERA ===============================
+let mediaStream = null;
+let isScanning = false;
+let scanTimer = null;
+let worker = null;
+
+async function getWorker() {
+  if (!worker) {
+    worker = await Tesseract.createWorker('eng', 1, {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          document.getElementById('cam-status').textContent = 'Reconociendo... ' + Math.round(m.progress*100) + '%';
+        }
+      }
+    });
+    await worker.setParameters({
+      tessedit_pageseg_mode: '7',
+      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+    });
+  }
+  return worker;
+}
+
+async function startCamera() {
+  try {
+    const constraints = {
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    };
+    mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    const video = document.getElementById('video');
+    video.srcObject = mediaStream;
+    await video.play();
+    document.getElementById('cam-status').textContent = 'Listo';
+    return true;
+  } catch (e) {
+    showToast('Error al acceder a la c&aacute;mara: ' + e.message, 'error');
+    return false;
+  }
+}
+
+function stopCamera() {
+  if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+  isScanning = false;
+  if (document.getElementById('btn-scan-text')) document.getElementById('btn-scan-text').textContent = 'Escanear';
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+  document.getElementById('cam-status').textContent = 'En espera';
+}
+
+async function toggleScan() {
+  const btn = document.getElementById('btn-scan');
+  const txt = document.getElementById('btn-scan-text');
+
+  if (isScanning) {
+    isScanning = false;
+    if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+    txt.textContent = 'Escanear';
+    btn.classList.remove('scanning');
+    document.getElementById('cam-status').textContent = 'En pausa';
+    return;
+  }
+
+  if (!mediaStream) {
+    const ok = await startCamera();
+    if (!ok) return;
+  }
+
+  isScanning = true;
+  txt.textContent = 'Detener';
+  btn.classList.add('scanning');
+  document.getElementById('cam-status').textContent = 'Escaneando...';
+
+  // Immediate capture
+  await captureAndDetect();
+
+  // Then every 3 seconds
+  scanTimer = setInterval(captureAndDetect, 3000);
+}
+
+async function captureAndDetect() {
+  const video = document.getElementById('video');
+  if (!video || !video.videoWidth) return;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0);
+
+  // Crop to center region (where the scan frame is)
+  const cropW = canvas.width * 0.75;
+  const cropH = canvas.height * 0.35;
+  const cropX = (canvas.width - cropW) / 2;
+  const cropY = (canvas.height - cropH) / 2;
+  const cropCanvas = document.createElement('canvas');
+  cropCanvas.width = cropW;
+  cropCanvas.height = cropH;
+  const cropCtx = cropCanvas.getContext('2d');
+  cropCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+  document.getElementById('cam-status').textContent = 'Procesando...';
+
+  try {
+    const w = await getWorker();
+    const { data } = await w.recognize(cropCanvas);
+    const text = data.text.trim().toUpperCase();
+    const cleaned = text.replace(/[^A-Z0-9]/g, '');
+    // Try short plate patterns (5-8 chars)
+    if (cleaned.length >= 5 && cleaned.length <= 8) {
+      processPlate(cleaned);
+    } else {
+      // Try finding a plate pattern within the text
+      const match = text.match(/[A-Z0-9]{5,8}/);
+      if (match) {
+        processPlate(match[0]);
+      } else {
+        document.getElementById('cam-status').textContent = 'Sin detecci&oacute;n';
+      }
+    }
+  } catch (e) {
+    console.warn('OCR error:', e);
+    document.getElementById('cam-status').textContent = 'Error de lectura';
+  }
+}
+
+function processPlate(plate) {
+  document.getElementById('cam-status').textContent = 'Patente: ' + plate;
+
+  const result = document.getElementById('cam-result');
+  const icon = document.getElementById('result-icon');
+  const plateEl = document.getElementById('result-plate');
+  const statusEl = document.getElementById('result-status');
+
+  result.classList.remove('hidden','success','danger','warning');
+  plateEl.textContent = plate;
+
+  let status, cssClass, ico;
+
+  if (DB.stolen.includes(plate)) {
+    status = '&#9888; VEH&Iacute;CULO DENUNCIADO - Tomar precauciones';
+    cssClass = 'danger';
+    ico = '&#9888;';
+    scanCount.stolen++;
+  } else if (DB.registered.includes(plate)) {
+    status = '&#10003; Veh&iacute;culo registrado - Sin novedades';
+    cssClass = 'success';
+    ico = '&#10003;';
+    scanCount.registered++;
+  } else {
+    status = '&#9888; No registrado en la base de datos local';
+    cssClass = 'warning';
+    ico = '&#9888;';
+    scanCount.unknown++;
+  }
+
+  scanCount.total++;
+  saveStats();
+  updateStats();
+
+  result.className = 'camera-result ' + cssClass;
+  icon.innerHTML = ico;
+  statusEl.innerHTML = status;
+
+  // Add to history
+  scanHistory.unshift({ plate, status: cssClass, time: Date.now() });
+  if (scanHistory.length > 20) scanHistory.pop();
+  saveHistory();
+  updateHistory();
+
+  // Vibrate
+  if (navigator.vibrate) navigator.vibrate(100);
+
+  // Auto-fill register form
+  document.getElementById('reg-plate').value = plate;
+}
+
+function clearCameraResult() {
+  document.getElementById('cam-result').classList.add('hidden');
+}
+
+function updateHistory() {
+  const list = document.getElementById('history-list');
+  if (!list) return;
+  if (!scanHistory.length) {
+    list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">Sin detecciones recientes</div>';
+    return;
+  }
+  list.innerHTML = scanHistory.slice(0,10).map(h => {
+    const sClass = h.status === 'success' ? 'reg' : h.status === 'danger' ? 'stolen' : 'unk';
+    const sText = h.status === 'success' ? 'Registrada' : h.status === 'danger' ? 'Denunciada' : 'Desconocida';
+    return `<div class="history-item">
+      <span class="h-plate">${h.plate}</span>
+      <span class="h-status ${sClass}">${sText}</span>
+    </div>`;
+  }).join('');
+}
+
+// =============================== STATS ===============================
+function updateStats() {
+  document.getElementById('stat-total').textContent = scanCount.total;
+  document.getElementById('stat-reg').textContent = scanCount.registered;
+  document.getElementById('stat-stolen').textContent = scanCount.stolen;
+  document.getElementById('stat-unknown').textContent = scanCount.unknown;
+}
+
+// =============================== WHATSAPP ===============================
+function sendWhatsApp() {
+  const plate = document.getElementById('reg-plate').value.trim();
+  const vehicle = document.getElementById('reg-vehicle').value;
+  const incident = document.getElementById('reg-incident').value;
+  const location = document.getElementById('reg-location').value.trim();
+  const desc = document.getElementById('reg-desc').value.trim();
+
+  if (!plate) { showToast('Ingrese una patente', 'error'); return; }
+  if (!vehicle) { showToast('Seleccione tipo de veh&iacute;culo', 'error'); return; }
+  if (!incident) { showToast('Seleccione tipo de incidente', 'error'); return; }
+
+  const msg = [
+    '🚨 *REPORTE DE INCIDENTE*',
+    '',
+    '🔹 *Patente:* ' + plate.toUpperCase(),
+    '🔹 *Veh&iacute;culo:* ' + vehicle,
+    '🔹 *Incidente:* ' + incident,
+    location ? '🔹 *Ubicaci&oacute;n:* ' + location : '',
+    desc ? '🔹 *Descripci&oacute;n:* ' + desc : '',
+    '',
+    '📱 Enviado desde PlateDetect',
+  ].filter(Boolean).join('\n');
+
+  const url = 'https://wa.me/?text=' + encodeURIComponent(msg);
+  window.open(url, '_blank');
+  showToast('Abriendo WhatsApp...', 'success');
+}
+
+// =============================== CONTACTS ===============================
+function renderContacts() {
+  const grid = document.getElementById('contact-grid');
+  grid.innerHTML = contacts.map((c,i) => `
+    <div class="contact-card">
+      <div class="avatar ${c.type||'custom'}">${c.icon||'&#128222;'}</div>
+      <div class="info">
+        <div class="name">${c.name}</div>
+        <div class="phone">${c.phone}</div>
+      </div>
+      <button class="call-btn" onclick="callContact('${c.phone}')" title="Llamar">
+        <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+      </button>
+    </div>
+  `).join('');
+}
+
+function callContact(phone) {
+  window.location.href = 'tel:' + phone;
+}
+
+function addContact() {
+  const name = document.getElementById('new-contact-name').value.trim();
+  const phone = document.getElementById('new-contact-phone').value.trim();
+  if (!name || !phone) { showToast('Ingrese nombre y tel&eacute;fono', 'error'); return; }
+  contacts.push({ name, phone, type: 'custom', icon: '&#128222;' });
+  saveContacts();
+  renderContacts();
+  document.getElementById('new-contact-name').value = '';
+  document.getElementById('new-contact-phone').value = '';
+  showToast('Contacto agregado', 'success');
+}
+
+// =============================== TOAST ===============================
+function showToast(msg, type) {
+  const el = document.getElementById('toast');
+  el.innerHTML = msg;
+  el.className = 'toast';
+  if (type) el.classList.add('toast-'+type);
+  el.classList.add('show');
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// =============================== INIT ===============================
+document.addEventListener('DOMContentLoaded', function() {
+  updateStats();
+  updateHistory();
+  renderContacts();
+  // If coming from camera with a detection, prefill register
+});
+</script>
+</body>
+</html>
