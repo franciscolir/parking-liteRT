@@ -52,10 +52,10 @@ async function initLiteRT() {
       'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/latest/efficientdet_lite0.tflite',
       { accelerator: 'wasm' }
     );
-    const details = liteModel.getInputDetails();
-    if (details.length > 0) {
-      INPUT_SIZE = details[0].shape[1];
-    }
+    const inDetails = liteModel.getInputDetails();
+    if (inDetails.length > 0) INPUT_SIZE = inDetails[0].shape[1];
+    const outDetails = liteModel.getOutputDetails();
+    console.log('liteRT outputs:', outDetails.map(d => d.name + ' ' + JSON.stringify(d.shape)));
     setStatus('liteRT.js listo');
     litertReady = true;
   } catch (e) {
@@ -85,19 +85,32 @@ function nms(boxes, scores, iouThresh) {
   return keep;
 }
 
-function findOutputTensor(outputs, details, nameHint, shapeHint) {
-  for (let i = 0; i < details.length; i++) {
-    const d = details[i];
-    if (d.name.toLowerCase().includes(nameHint)) return { tensor: outputs[i], detail: d };
+function findOutputTensor(outputs, details, hints, fallbackIdx) {
+  for (const hint of hints) {
+    for (let i = 0; i < details.length; i++) {
+      const name = details[i].name.toLowerCase();
+      if (name.includes(hint)) return { tensor: outputs[i], detail: details[i], idx: i };
+    }
+  }
+  if (fallbackIdx !== undefined && fallbackIdx < details.length) {
+    return { tensor: outputs[fallbackIdx], detail: details[fallbackIdx], idx: fallbackIdx };
   }
   for (let i = 0; i < details.length; i++) {
     const d = details[i];
-    const flatSize = d.shape.reduce((a, b) => a * b, 1);
-    if (shapeHint === 'boxes' && d.shape.length === 3 && d.shape[2] === 4) return { tensor: outputs[i], detail: d };
-    if (shapeHint === 'scores' && d.shape.length === 2 && d.shape[1] > 1 && flatSize < 200) return { tensor: outputs[i], detail: d };
-    if (shapeHint === 'classes' && d.shape.length === 2 && d.shape[1] > 1 && flatSize < 200) return { tensor: outputs[i], detail: d };
+    const flat = d.shape.reduce((a, b) => a * b, 1);
+    if (flat > 0 && flat < 10) continue;
+    return { tensor: outputs[i], detail: d, idx: i };
   }
   return null;
+}
+
+function classifyTensor(detail, flatSize) {
+  const name = detail.name.toLowerCase();
+  const shape = detail.shape;
+  if (name.includes('box') || (shape.length >= 2 && shape[shape.length - 1] === 4)) return 'boxes';
+  if (name.includes('num_det') || name.includes('numdet') || flatSize <= 4) return 'num';
+  if (name.includes('score') || name.includes('conf')) return 'scores';
+  return 'classes';
 }
 
 async function detectVehicles(frame) {
@@ -122,24 +135,36 @@ async function detectVehicles(frame) {
   inputTensor.delete();
 
   const details = liteModel.getOutputDetails();
+  const tensors = {};
+  const flatSizes = [];
 
-  const boxesInfo = findOutputTensor(outputs, details, 'box', 'boxes');
-  const scoresInfo = findOutputTensor(outputs, details, 'score', 'scores');
-  const classesInfo = findOutputTensor(outputs, details, 'class', 'classes');
+  for (let i = 0; i < details.length; i++) {
+    const flat = details[i].shape.reduce((a, b) => a * b, 1);
+    flatSizes.push(flat);
+    const type = classifyTensor(details[i], flat);
+    if (!tensors[type]) tensors[type] = { tensor: outputs[i], detail: details[i], flat };
+  }
 
-  if (!boxesInfo) {
+  // Ensure boxes is always found
+  if (!tensors.boxes) {
+    const fallback = findOutputTensor(outputs, details, ['box', 'detection'], 0);
+    if (fallback) tensors.boxes = { tensor: fallback.tensor, detail: fallback.detail, flat: fallback.detail.shape.reduce((a, b) => a * b, 1) };
+  }
+
+  if (!tensors.boxes) {
+    console.warn('liteRT: no se encontraron bounding boxes');
     outputs.forEach(o => o.delete());
     return [];
   }
 
-  const boxData = await boxesInfo.tensor.toTypedArray();
-  const scoreData = scoresInfo ? await scoresInfo.tensor.toTypedArray() : [];
-  const classData = classesInfo ? await classesInfo.tensor.toTypedArray() : [];
+  const boxData = await tensors.boxes.tensor.toTypedArray();
+  const scoreData = tensors.scores ? await tensors.scores.tensor.toTypedArray() : [];
+  const classData = tensors.classes ? await tensors.classes.tensor.toTypedArray() : [];
 
   outputs.forEach(o => o.delete());
 
-  const boxShape = boxesInfo.detail.shape;
-  const numBoxes = boxShape.length === 3 ? boxShape[1] : boxShape[0];
+  const boxShape = tensors.boxes.detail.shape;
+  const numBoxes = boxShape.length === 3 ? boxShape[1] : Math.floor(boxData.length / 4);
 
   const fw = frame.width, fh = frame.height;
   const vehBoxes = [];
