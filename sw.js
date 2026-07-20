@@ -29,7 +29,7 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
-  const isCDN = url.href.includes('litertjs') || url.href.includes('tesseract') || url.href.includes('wasm') || url.href.includes('storage.googleapis.com');
+  const isCDN = url.href.includes('litertjs') || url.href.includes('wasm') || url.href.includes('storage.googleapis.com');
 
   if (isCDN) {
     e.respondWith(
