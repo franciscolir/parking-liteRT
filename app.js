@@ -85,16 +85,30 @@ function nms(boxes, scores, iouThresh) {
   return keep;
 }
 
+function findOutputTensor(outputs, details, nameHint, shapeHint) {
+  for (let i = 0; i < details.length; i++) {
+    const d = details[i];
+    if (d.name.toLowerCase().includes(nameHint)) return { tensor: outputs[i], detail: d };
+  }
+  for (let i = 0; i < details.length; i++) {
+    const d = details[i];
+    const flatSize = d.shape.reduce((a, b) => a * b, 1);
+    if (shapeHint === 'boxes' && d.shape.length === 3 && d.shape[2] === 4) return { tensor: outputs[i], detail: d };
+    if (shapeHint === 'scores' && d.shape.length === 2 && d.shape[1] > 1 && flatSize < 200) return { tensor: outputs[i], detail: d };
+    if (shapeHint === 'classes' && d.shape.length === 2 && d.shape[1] > 1 && flatSize < 200) return { tensor: outputs[i], detail: d };
+  }
+  return null;
+}
+
 async function detectVehicles(frame) {
   if (!liteModel || !litertReady) return [];
 
   const canvas = document.createElement('canvas');
   canvas.width = INPUT_SIZE;
   canvas.height = INPUT_SIZE;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(frame, 0, 0, INPUT_SIZE, INPUT_SIZE);
+  canvas.getContext('2d').drawImage(frame, 0, 0, INPUT_SIZE, INPUT_SIZE);
 
-  const imgData = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
+  const imgData = canvas.getContext('2d').getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
   const pixels = imgData.data;
   const input = new Float32Array(1 * INPUT_SIZE * INPUT_SIZE * 3);
   for (let i = 0; i < INPUT_SIZE * INPUT_SIZE; i++) {
@@ -107,38 +121,43 @@ async function detectVehicles(frame) {
   const outputs = await liteModel.run(inputTensor);
   inputTensor.delete();
 
-  let boxes = [], scores = [], classes = [];
+  const details = liteModel.getOutputDetails();
 
-  for (const out of outputs) {
-    const data = await out.toTypedArray();
-    const len = data.length;
-    if (len === 4) continue;
-    if (len > 100 && len < 1000 && len % 4 === 0) {
-      const n = len / 4;
-      for (let i = 0; i < n; i++) {
-        const ymin = data[i * 4], xmin = data[i * 4 + 1], ymax = data[i * 4 + 2], xmax = data[i * 4 + 3];
-        boxes.push({ x: xmin, y: ymin, w: xmax - xmin, h: ymax - ymin });
-      }
-    } else if (len < 100) {
-      for (let i = 0; i < len; i++) scores.push(data[i]);
-    } else {
-      for (let i = 0; i < len && classes.length < 100; i++) classes.push(Math.round(data[i]));
-    }
-    out.delete();
+  const boxesInfo = findOutputTensor(outputs, details, 'box', 'boxes');
+  const scoresInfo = findOutputTensor(outputs, details, 'score', 'scores');
+  const classesInfo = findOutputTensor(outputs, details, 'class', 'classes');
+
+  if (!boxesInfo) {
+    outputs.forEach(o => o.delete());
+    return [];
   }
 
-  if (boxes.length === 0) return [];
+  const boxData = await boxesInfo.tensor.toTypedArray();
+  const scoreData = scoresInfo ? await scoresInfo.tensor.toTypedArray() : [];
+  const classData = classesInfo ? await classesInfo.tensor.toTypedArray() : [];
+
+  outputs.forEach(o => o.delete());
+
+  const boxShape = boxesInfo.detail.shape;
+  const numBoxes = boxShape.length === 3 ? boxShape[1] : boxShape[0];
 
   const fw = frame.width, fh = frame.height;
   const vehBoxes = [];
 
-  for (let i = 0; i < Math.min(boxes.length, scores.length, 25); i++) {
-    const cls = classes[i] || 0;
+  for (let i = 0; i < numBoxes; i++) {
+    const score = scoreData[i] || 0;
+    if (score < 0.35) continue;
+
+    const cls = Math.round(classData[i] || 0);
     if (!VEHICLE_CLASSES.includes(COCO_LABELS[cls])) continue;
-    const b = boxes[i];
+
+    const ymin = boxData[i * 4], xmin = boxData[i * 4 + 1];
+    const ymax = boxData[i * 4 + 2], xmax = boxData[i * 4 + 3];
+
     vehBoxes.push({
-      x: b.x * fw, y: b.y * fh, w: b.w * fw, h: b.h * fh,
-      score: scores[i] || 0,
+      x: xmin * fw, y: ymin * fh,
+      w: (xmax - xmin) * fw, h: (ymax - ymin) * fh,
+      score,
     });
   }
 
