@@ -1,49 +1,32 @@
 // =============================== IMPORTS ===============================
 import { loadLiteRt, loadAndCompile, Tensor } from 'https://cdn.jsdelivr.net/npm/@litertjs/core/+esm';
 
-// =============================== DATABASE ===============================
+// =============================== CONSTANTS ===============================
 const DB = {
   registered: ['ABC123', 'DEF456', 'GHI789', 'JKL012', 'MNO345', 'PQR678', 'STU901', 'BBBB10'],
   stolen: ['XYZ789', 'LMN456', 'WVU321'],
 };
-
-let scanHistory = JSON.parse(localStorage.getItem('plateHistory') || '[]');
-let scanCount = JSON.parse(localStorage.getItem('plateStats') || '{"total":0,"registered":0,"stolen":0,"unknown":0}');
-let contacts = JSON.parse(localStorage.getItem('contacts') || '[]');
-
-const defaultContacts = [
+const PLATE_PATTERNS = [/^[A-Z]{4}\d{2}$/, /^[A-Z]{2}\d{4}$/];
+const VEHICLE_LABELS = ['car', 'truck', 'bus', 'motorcycle'];
+const DEFAULT_CONTACTS = [
   { name: 'Policia', phone: '911', type: 'police', icon: '\u{1F6A8}' },
   { name: 'Emergencias', phone: '107', type: 'emergency', icon: '\u{1F691}' },
   { name: 'Bomberos', phone: '100', type: 'fire', icon: '\u{1F525}' },
   { name: 'Hospital', phone: '108', type: 'hospital', icon: '\u{1F3E5}' },
 ];
 
-if (!contacts.length) contacts = JSON.parse(JSON.stringify(defaultContacts));
+// =============================== STATE ===============================
+let scanHistory = JSON.parse(localStorage.getItem('plateHistory') || '[]');
+let scanCount = JSON.parse(localStorage.getItem('plateStats') || '{"total":0,"registered":0,"stolen":0,"unknown":0}');
+let contacts = JSON.parse(localStorage.getItem('contacts') || '[]');
+if (!contacts.length) contacts = JSON.parse(JSON.stringify(DEFAULT_CONTACTS));
+let mediaStream = null, isScanning = false, scanTimer = null;
+let liteModel = null, litertReady = false, INPUT_SIZE = 320;
 
-function saveStats() { localStorage.setItem('plateStats', JSON.stringify(scanCount)); }
-function saveHistory() { localStorage.setItem('plateHistory', JSON.stringify(scanHistory)); }
-function saveContacts() { localStorage.setItem('contacts', JSON.stringify(contacts)); }
+// =============================== PERSISTENCE ===============================
+function save(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
 
-// =============================== LITERT.JS ENGINE ===============================
-let liteModel = null;
-let litertReady = false;
-let INPUT_SIZE = 320;
-
-const VEHICLE_CLASSES = ['car', 'truck', 'bus', 'motorcycle'];
-const COCO_LABELS = [
-  'person','bicycle','car','motorcycle','airplane','bus','train','truck','boat',
-  'traffic light','fire hydrant','street sign','stop sign','parking meter','bench',
-  'bird','cat','dog','horse','sheep','cow','elephant','bear','zebra','giraffe',
-  'hat','backpack','umbrella','shoe','eye glasses','handbag','tie','suitcase',
-  'frisbee','skis','snowboard','sports ball','kite','baseball bat','baseball glove',
-  'skateboard','surfboard','tennis racket','bottle','plate','wine glass','cup',
-  'fork','knife','spoon','bowl','banana','apple','sandwich','orange','broccoli',
-  'carrot','hot dog','pizza','donut','cake','chair','couch','potted plant','bed',
-  'mirror','dining table','window','desk','toilet','door','tv','laptop','mouse',
-  'remote','keyboard','cell phone','microwave','oven','toaster','sink','refrigerator',
-  'blender','book','clock','vase','scissors','teddy bear','hair drier','toothbrush','hair brush'
-];
-
+// =============================== LITERT.JS - INIT ===============================
 async function initLiteRT() {
   setStatus('Cargando liteRT.js...');
   try {
@@ -52,10 +35,8 @@ async function initLiteRT() {
       'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/latest/efficientdet_lite0.tflite',
       { accelerator: 'wasm' }
     );
-    const inDetails = liteModel.getInputDetails();
-    if (inDetails.length > 0) INPUT_SIZE = inDetails[0].shape[1];
-    const outDetails = liteModel.getOutputDetails();
-    console.log('liteRT outputs:', outDetails.map(d => d.name + ' ' + JSON.stringify(d.shape)));
+    INPUT_SIZE = liteModel.getInputDetails()[0]?.shape[1] || 320;
+    console.log('liteRT outputs:', liteModel.getOutputDetails().map(d => d.name + ' ' + JSON.stringify(d.shape)));
     setStatus('liteRT.js listo');
     litertReady = true;
   } catch (e) {
@@ -64,165 +45,226 @@ async function initLiteRT() {
   }
 }
 
-function iou(b1, b2) {
-  const x1 = Math.max(b1.x, b2.x), y1 = Math.max(b1.y, b2.y);
-  const x2 = Math.min(b1.x + b1.w, b2.x + b2.w), y2 = Math.min(b1.y + b1.h, b2.y + b2.h);
-  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-  const area1 = b1.w * b1.h, area2 = b2.w * b2.h;
-  return inter / (area1 + area2 - inter);
-}
-
-function nms(boxes, scores, iouThresh) {
-  const idx = boxes.map((_, i) => i).sort((a, b) => scores[b] - scores[a]);
-  const keep = [];
-  while (idx.length > 0) {
-    const i = idx.shift();
-    keep.push(i);
-    for (let j = idx.length - 1; j >= 0; j--) {
-      if (iou(boxes[i], boxes[idx[j]]) > iouThresh) idx.splice(j, 1);
-    }
-  }
-  return keep;
-}
-
-function findOutputTensor(outputs, details, hints, fallbackIdx) {
-  for (const hint of hints) {
-    for (let i = 0; i < details.length; i++) {
-      const name = details[i].name.toLowerCase();
-      if (name.includes(hint)) return { tensor: outputs[i], detail: details[i], idx: i };
-    }
-  }
-  if (fallbackIdx !== undefined && fallbackIdx < details.length) {
-    return { tensor: outputs[fallbackIdx], detail: details[fallbackIdx], idx: fallbackIdx };
-  }
-  for (let i = 0; i < details.length; i++) {
-    const d = details[i];
-    const flat = d.shape.reduce((a, b) => a * b, 1);
-    if (flat > 0 && flat < 10) continue;
-    return { tensor: outputs[i], detail: d, idx: i };
-  }
-  return null;
-}
-
-function classifyTensor(detail, flatSize) {
-  const name = detail.name.toLowerCase();
-  const shape = detail.shape;
-  if (name.includes('box') || (shape.length >= 2 && shape[shape.length - 1] === 4)) return 'boxes';
-  if (name.includes('num_det') || name.includes('numdet') || flatSize <= 4) return 'num';
-  if (name.includes('score') || name.includes('conf')) return 'scores';
-  return 'classes';
-}
-
-async function detectVehicles(frame) {
-  if (!liteModel || !litertReady) return [];
-
+// =============================== LITERT.JS - INFERENCE ===============================
+function tensorFromFrame(frame) {
   const canvas = document.createElement('canvas');
-  canvas.width = INPUT_SIZE;
-  canvas.height = INPUT_SIZE;
+  canvas.width = canvas.height = INPUT_SIZE;
   canvas.getContext('2d').drawImage(frame, 0, 0, INPUT_SIZE, INPUT_SIZE);
-
-  const imgData = canvas.getContext('2d').getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
-  const pixels = imgData.data;
-  const input = new Float32Array(1 * INPUT_SIZE * INPUT_SIZE * 3);
+  const pixels = canvas.getContext('2d').getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
+  const data = new Float32Array(INPUT_SIZE * INPUT_SIZE * 3);
   for (let i = 0; i < INPUT_SIZE * INPUT_SIZE; i++) {
-    input[i * 3] = pixels[i * 4] / 255.0;
-    input[i * 3 + 1] = pixels[i * 4 + 1] / 255.0;
-    input[i * 3 + 2] = pixels[i * 4 + 2] / 255.0;
+    data[i * 3] = pixels[i * 4] / 255;
+    data[i * 3 + 1] = pixels[i * 4 + 1] / 255;
+    data[i * 3 + 2] = pixels[i * 4 + 2] / 255;
   }
+  return new Tensor(data, [1, INPUT_SIZE, INPUT_SIZE, 3]);
+}
 
-  const inputTensor = new Tensor(input, [1, INPUT_SIZE, INPUT_SIZE, 3]);
+function classifyTensor(detail) {
+  const n = detail.name.toLowerCase();
+  const s = detail.shape;
+  const flat = s.reduce((a, b) => a * b, 1);
+  if (n.includes('box') || (s.length >= 2 && s[s.length - 1] === 4)) return 'boxes';
+  if (n.includes('score') || n.includes('conf')) return 'scores';
+  if (n.includes('class') || n.includes('category')) return 'classes';
+  if (n.includes('num') || flat <= 4) return 'num';
+  if (flat > 100 && flat < 2000 && flat % 4 === 0) return 'boxes';
+  return 'other';
+}
+
+async function detectVehicles(video) {
+  if (!liteModel || !litertReady) return [];
+  const inputTensor = tensorFromFrame(video);
   const outputs = await liteModel.run(inputTensor);
   inputTensor.delete();
 
   const details = liteModel.getOutputDetails();
-  const tensors = {};
-  const flatSizes = [];
-
+  const grouped = {};
   for (let i = 0; i < details.length; i++) {
-    const flat = details[i].shape.reduce((a, b) => a * b, 1);
-    flatSizes.push(flat);
-    const type = classifyTensor(details[i], flat);
-    if (!tensors[type]) tensors[type] = { tensor: outputs[i], detail: details[i], flat };
+    const type = classifyTensor(details[i]);
+    if (!grouped[type]) grouped[type] = { tensor: outputs[i], detail: details[i] };
   }
+  if (!grouped.boxes) { outputs.forEach(o => o.delete()); return []; }
 
-  // Ensure boxes is always found
-  if (!tensors.boxes) {
-    const fallback = findOutputTensor(outputs, details, ['box', 'detection'], 0);
-    if (fallback) tensors.boxes = { tensor: fallback.tensor, detail: fallback.detail, flat: fallback.detail.shape.reduce((a, b) => a * b, 1) };
-  }
-
-  if (!tensors.boxes) {
-    console.warn('liteRT: no se encontraron bounding boxes');
-    outputs.forEach(o => o.delete());
-    return [];
-  }
-
-  const boxData = await tensors.boxes.tensor.toTypedArray();
-  const scoreData = tensors.scores ? await tensors.scores.tensor.toTypedArray() : [];
-  const classData = tensors.classes ? await tensors.classes.tensor.toTypedArray() : [];
-
+  const boxData = await grouped.boxes.tensor.toTypedArray();
+  const scoreData = grouped.scores ? await grouped.scores.tensor.toTypedArray() : [];
+  const classData = grouped.classes ? await grouped.classes.tensor.toTypedArray() : [];
   outputs.forEach(o => o.delete());
 
-  const boxShape = tensors.boxes.detail.shape;
-  const numBoxes = boxShape.length === 3 ? boxShape[1] : Math.floor(boxData.length / 4);
+  const num = grouped.boxes.detail.shape.length === 3 ? grouped.boxes.detail.shape[1] : Math.floor(boxData.length / 4);
+  const fw = video.videoWidth, fh = video.videoHeight;
+  const result = [];
 
-  const fw = frame.width, fh = frame.height;
-  const vehBoxes = [];
-
-  for (let i = 0; i < numBoxes; i++) {
+  for (let i = 0; i < num; i++) {
     const score = scoreData[i] || 0;
     if (score < 0.35) continue;
-
     const cls = Math.round(classData[i] || 0);
-    if (!VEHICLE_CLASSES.includes(COCO_LABELS[cls])) continue;
-
-    const ymin = boxData[i * 4], xmin = boxData[i * 4 + 1];
-    const ymax = boxData[i * 4 + 2], xmax = boxData[i * 4 + 3];
-
-    vehBoxes.push({
-      x: xmin * fw, y: ymin * fh,
-      w: (xmax - xmin) * fw, h: (ymax - ymin) * fh,
-      score,
-    });
+    if (!VEHICLE_LABELS[cls] || VEHICLE_LABELS.indexOf(VEHICLE_LABELS[cls]) === -1) continue;
+    const ymin = boxData[i * 4], xmin = boxData[i * 4 + 1], ymax = boxData[i * 4 + 2], xmax = boxData[i * 4 + 3];
+    result.push({ x: xmin * fw, y: ymin * fh, w: (xmax - xmin) * fw, h: (ymax - ymin) * fh, score });
   }
 
-  const keep = nms(vehBoxes, vehBoxes.map(v => v.score), 0.5);
-  return keep.map(i => vehBoxes[i]);
+  return result;
 }
 
-// =============================== PLATE PATTERNS (Chile) ===============================
-const PLATE_PATTERNS = [/^[A-Z]{4}\d{2}$/, /^[A-Z]{2}\d{4}$/];
-const OCR_CORRECTIONS = {
-  '0': 'O', 'O': '0', '1': 'I', 'I': '1', '2': 'Z', 'Z': '2',
-  '5': 'S', 'S': '5', '8': 'B', 'B': '8', '6': 'G', 'G': '6', '4': 'A', 'A': '4',
-};
-function validatePlate(t) { return PLATE_PATTERNS.some(p => p.test(t)); }
+// =============================== PLATE OCR (canvas-based, no Tesseract) ===============================
+function binarize(canvas) {
+  const ctx = canvas.getContext('2d');
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data;
+  const sat = new Uint32Array((canvas.width + 1) * (canvas.height + 1));
+  for (let y = 0; y < canvas.height; y++) {
+    for (let x = 0; x < canvas.width; x++) {
+      const i = (y * canvas.width + x) * 4;
+      const g = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+      d[i] = d[i + 1] = d[i + 2] = g;
+      sat[(y + 1) * (canvas.width + 1) + (x + 1)] = g + sat[y * (canvas.width + 1) + (x + 1)] + sat[(y + 1) * (canvas.width + 1) + x] - sat[y * (canvas.width + 1) + x];
+    }
+  }
+  const half = Math.max(3, Math.round(Math.min(canvas.width, canvas.height) / 14) * 2 + 1);
+  for (let y = 0; y < canvas.height; y++) {
+    for (let x = 0; x < canvas.width; x++) {
+      const x1 = Math.max(0, x - half), y1 = Math.max(0, y - half);
+      const x2 = Math.min(canvas.width, x + half), y2 = Math.min(canvas.height, y + half);
+      const sum = sat[y2 * (canvas.width + 1) + x2] - sat[y1 * (canvas.width + 1) + x2] - sat[y2 * (canvas.width + 1) + x1] + sat[y1 * (canvas.width + 1) + x1];
+      const local = sum / ((x2 - x1) * (y2 - y1)) - 8;
+      const pi = (y * canvas.width + x) * 4;
+      d[pi] = d[pi + 1] = d[pi + 2] = d[pi] > local ? 255 : 0;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function verticalProjection(canvas) {
+  const img = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+  const proj = new Uint32Array(canvas.width);
+  for (let x = 0; x < canvas.width; x++) {
+    let count = 0;
+    for (let y = 0; y < canvas.height; y++) {
+      if (img.data[(y * canvas.width + x) * 4] === 0) count++;
+    }
+    proj[x] = count;
+  }
+  return proj;
+}
+
+function segmentChars(canvas) {
+  const proj = verticalProjection(canvas);
+  const chars = [];
+  let start = -1;
+  for (let x = 0; x < proj.length; x++) {
+    if (proj[x] > canvas.height * 0.1 && start === -1) start = x;
+    else if (proj[x] <= canvas.height * 0.1 && start !== -1) {
+      if (x - start > canvas.width * 0.04) chars.push({ x: start, w: x - start });
+      start = -1;
+    }
+  }
+  if (start !== -1 && proj.length - start > canvas.width * 0.04) chars.push({ x: start, w: proj.length - start });
+  return chars;
+}
+
+function charDensity(canvas, cx, cw) {
+  const img = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+  const zones = [];
+  const zoneW = Math.max(1, Math.floor(cw / 3));
+  const zoneH = Math.max(1, Math.floor(canvas.height / 4));
+  for (let zy = 0; zy < 4; zy++) {
+    for (let zx = 0; zx < 3; zx++) {
+      let black = 0, total = 0;
+      for (let y = zy * zoneH; y < Math.min((zy + 1) * zoneH, canvas.height); y++) {
+        for (let x = cx + zx * zoneW; x < Math.min(cx + (zx + 1) * zoneW, canvas.width); x++) {
+          total++;
+          if (img.data[(y * canvas.width + x) * 4] === 0) black++;
+        }
+      }
+      zones.push(total > 0 ? black / total : 0);
+    }
+  }
+  return zones;
+}
+
+function matchChar(density) {
+  const templates = {
+    '0': '011,101,101,011', '1': '001,111,001,001',
+    '2': '110,001,010,111', '3': '111,001,001,111',
+    '4': '101,111,001,001', '5': '111,100,011,111',
+    '6': '011,100,111,111', '7': '111,001,010,010',
+    '8': '011,101,011,111', '9': '111,111,001,010',
+    'A': '010,101,111,101', 'B': '110,101,110,101',
+    'C': '011,100,100,011', 'D': '110,101,101,110',
+    'E': '111,100,110,111', 'F': '111,100,110,100',
+    'G': '011,100,111,011', 'H': '101,111,111,101',
+    'I': '111,010,010,111', 'J': '111,001,001,111',
+    'K': '101,110,110,101', 'L': '100,100,100,111',
+    'M': '101,111,111,101', 'N': '110,111,111,011',
+    'O': '011,101,101,011', 'P': '110,101,110,100',
+    'R': '110,101,111,101', 'S': '011,100,001,111',
+    'T': '111,010,010,010', 'U': '101,101,101,011',
+    'V': '101,101,101,010', 'X': '101,010,010,101',
+    'Y': '101,010,010,010', 'Z': '111,001,010,111',
+  };
+
+  let best = null, bestScore = -1;
+  for (const [ch, tmpl] of Object.entries(templates)) {
+    const tArr = tmpl.split(',').map(r => [...r].map(c => parseInt(c)));
+    let score = 0;
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 3; x++) {
+        const t = tArr[y][x];
+        const d = density[y * 3 + x];
+        score += t === 1 ? d : (1 - d);
+      }
+    }
+    if (score > bestScore) { bestScore = score; best = ch; }
+  }
+  return bestScore > 6 ? best : null;
+}
+
+function readPlate(canvas) {
+  if (canvas.width < 40 || canvas.height < 20) return null;
+
+  const s = 3;
+  const scaled = document.createElement('canvas');
+  scaled.width = Math.max(60, Math.round(canvas.width * s));
+  scaled.height = Math.max(60, Math.round(canvas.height * s));
+  scaled.getContext('2d').drawImage(canvas, 0, 0, scaled.width, scaled.height);
+  binarize(scaled);
+
+  const chars = segmentChars(scaled);
+  if (chars.length < 4 || chars.length > 8) return null;
+
+  // Filter chars by height/width ratio
+  const valid = chars.filter(c => c.w / scaled.height > 0.15 && c.w / scaled.height < 1.2);
+  if (valid.length < 4) return null;
+
+  let result = '';
+  for (const c of valid) {
+    const density = charDensity(scaled, c.x, c.w);
+    const ch = matchChar(density);
+    if (!ch) return null;
+    result += ch;
+  }
+
+  return result;
+}
+
 function correctPlate(raw) {
-  if (validatePlate(raw)) return raw;
+  const corrections = {
+    '0': 'O', 'O': '0', '1': 'I', 'I': '1', '2': 'Z', 'Z': '2',
+    '5': 'S', 'S': '5', '8': 'B', 'B': '8', '6': 'G', 'G': '6', '4': 'A', 'A': '4',
+  };
+  if (PLATE_PATTERNS.some(p => p.test(raw))) return raw;
   for (let i = 0; i < raw.length; i++) {
-    if (!OCR_CORRECTIONS[raw[i]]) continue;
-    for (const c of OCR_CORRECTIONS[raw[i]]) {
+    if (!corrections[raw[i]]) continue;
+    for (const c of corrections[raw[i]]) {
       const t = raw.slice(0, i) + c + raw.slice(i + 1);
-      if (validatePlate(t)) return t;
+      if (PLATE_PATTERNS.some(p => p.test(t))) return t;
     }
   }
   return null;
 }
 
 // =============================== CAMERA ===============================
-let mediaStream = null, isScanning = false, scanTimer = null;
-let ocrWorker = null;
-
-async function getOCRWorker() {
-  if (!ocrWorker) {
-    ocrWorker = await Tesseract.createWorker('eng', 1, {
-      logger: m => { if (m.status === 'recognizing text') setStatus('OCR ' + Math.round(m.progress * 100) + '%'); },
-    });
-    await ocrWorker.setParameters({ tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' });
-  }
-  return ocrWorker;
-}
-
 async function startCamera() {
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -252,80 +294,15 @@ function stopCamera() {
 }
 
 window.toggleScan = async function () {
-  const toggle = document.getElementById('scan-toggle');
-  const label = document.getElementById('switch-label');
-  if (isScanning) {
-    isScanning = false;
-    if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
-    toggle.checked = false; label.textContent = 'Iniciar deteccion';
-    document.getElementById('cam-status').classList.remove('scanning');
-    if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
-    setStatus('Detenido'); return;
-  }
-  if (!mediaStream) { const ok = await startCamera(); if (!ok) { toggle.checked = false; return; } }
-  if (!litertReady && !window._liteLoading) {
-    window._liteLoading = true;
-    initLiteRT();
-  }
+  if (isScanning) { stopCamera(); setStatus('Detenido'); return; }
+  if (!mediaStream && !(await startCamera())) { document.getElementById('scan-toggle').checked = false; return; }
   isScanning = true;
-  label.textContent = 'Apagar camara';
+  document.getElementById('switch-label').textContent = 'Apagar camara';
   document.getElementById('cam-status').classList.add('scanning');
   setStatus('Escaneando...');
-  await captureAndDetect();
-  scanTimer = setInterval(captureAndDetect, 2500);
+  await detect();
+  scanTimer = setInterval(detect, 2500);
 };
-
-// =============================== ADAPTIVE THRESHOLD ===============================
-function adaptiveThreshold(canvas) {
-  const ctx = canvas.getContext('2d');
-  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const w = canvas.width, h = canvas.height, d = img.data;
-  const sat = new Uint32Array((w + 1) * (h + 1));
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
-      const g = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-      d[i] = d[i + 1] = d[i + 2] = g;
-      sat[(y + 1) * (w + 1) + (x + 1)] = g + sat[y * (w + 1) + (x + 1)] + sat[(y + 1) * (w + 1) + x] - sat[y * (w + 1) + x];
-    }
-  }
-  const half = Math.max(3, Math.round(Math.min(w, h) / 14) * 2 + 1);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const x1 = Math.max(0, x - half), y1 = Math.max(0, y - half);
-      const x2 = Math.min(w, x + half), y2 = Math.min(h, y + half);
-      const sum = sat[y2 * (w + 1) + x2] - sat[y1 * (w + 1) + x2] - sat[y2 * (w + 1) + x1] + sat[y1 * (w + 1) + x1];
-      const local = sum / ((x2 - x1) * (y2 - y1)) - 6;
-      const pi = (y * w + x) * 4;
-      const v = d[pi] > local ? 255 : 0;
-      d[pi] = d[pi + 1] = d[pi + 2] = v;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-}
-
-// =============================== OCR ===============================
-async function runOCR(canvas) {
-  if (canvas.width < 20 || canvas.height < 20) return null;
-  const w = await getOCRWorker();
-  let { data } = await w.recognize(canvas);
-  let text = data.text.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (text.length >= 5 && text.length <= 8) { const r = correctPlate(text) || (validatePlate(text) ? text : null); if (r) return r; }
-
-  const s = 3;
-  const p = document.createElement('canvas');
-  p.width = Math.max(60, Math.round(canvas.width * s));
-  p.height = Math.max(60, Math.round(canvas.height * s));
-  p.getContext('2d').drawImage(canvas, 0, 0, p.width, p.height);
-  adaptiveThreshold(p);
-
-  ({ data } = await w.recognize(p));
-  text = data.text.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (text.length >= 5 && text.length <= 8) { const r = correctPlate(text) || (validatePlate(text) ? text : null); if (r) return r; }
-  const m = text.match(/[A-Z0-9]{5,8}/);
-  if (m) return correctPlate(m[0]) || (validatePlate(m[0]) ? m[0] : null);
-  return null;
-}
 
 // =============================== DETECTION PIPELINE ===============================
 function captureFrame() {
@@ -339,12 +316,12 @@ function captureFrame() {
 
 function crop(src, x, y, w, h) {
   const c = document.createElement('canvas');
-  c.width = Math.max(30, Math.round(w)); c.height = Math.max(30, Math.round(h));
+  c.width = Math.max(40, Math.round(w)); c.height = Math.max(40, Math.round(h));
   c.getContext('2d').drawImage(src, Math.round(x), Math.round(y), Math.round(w), Math.round(h), 0, 0, c.width, c.height);
   return c;
 }
 
-async function captureAndDetect() {
+async function detect() {
   const video = document.getElementById('video');
   if (!video || !video.videoWidth) return;
   const frame = captureFrame();
@@ -353,33 +330,37 @@ async function captureAndDetect() {
   let plate = null;
   const fw = frame.width, fh = frame.height;
 
-  // Approach 1: Direct OCR on center regions
+  // Center regions
   const regions = [
     { x: fw * 0.1, y: fh * 0.3, w: fw * 0.8, h: fh * 0.4 },
-    { x: fw * 0.1, y: fh * 0.45, w: fw * 0.8, h: fh * 0.35 },
-    { x: 0, y: fh * 0.35, w: fw, h: fh * 0.3 },
+    { x: fw * 0.05, y: fh * 0.45, w: fw * 0.9, h: fh * 0.35 },
   ];
   for (const r of regions) {
     if (plate) break;
     setStatus('Buscando...');
-    try { plate = await runOCR(crop(frame, r.x, r.y, r.w, r.h)); } catch (e) {}
+    try { plate = readPlate(crop(frame, r.x, r.y, r.w, r.h)); } catch (e) {}
   }
 
-  // Approach 2: Vehicle detection via LiteRT.js
-  if (!plate) {
+  // Vehicle detection via LiteRT.js
+  if (!plate && litertReady) {
     try {
       setStatus('liteRT.js detectando...');
       const vehicles = await detectVehicles(video);
       for (const v of vehicles) {
         if (plate) break;
-        setStatus('Vehiculo -> OCR');
-        plate = await runOCR(crop(frame, v.x + v.w * 0.12, v.y + v.h * 0.5, v.w * 0.76, v.h * 0.35));
+        setStatus('Leyendo patente...');
+        plate = readPlate(crop(frame, v.x + v.w * 0.12, v.y + v.h * 0.5, v.w * 0.76, v.h * 0.35));
       }
     } catch (e) { console.warn('liteRT error:', e); }
   }
 
-  if (plate) processPlate(plate);
-  else setStatus('Sin deteccion');
+  if (plate) {
+    const corrected = correctPlate(plate);
+    if (corrected) processPlate(corrected);
+    else setStatus('Patente invalida: ' + plate);
+  } else {
+    setStatus('Sin deteccion');
+  }
 }
 
 function processPlate(plate) {
@@ -387,17 +368,21 @@ function processPlate(plate) {
   const result = document.getElementById('cam-result');
   result.classList.remove('hidden', 'success', 'danger', 'warning');
   document.getElementById('result-plate').textContent = plate;
-  let status, css, ico;
-  if (DB.stolen.includes(plate)) { status = '\u26A0 VEHICULO DENUNCIADO'; css = 'danger'; ico = '\u26A0'; scanCount.stolen++; }
-  else if (DB.registered.includes(plate)) { status = '\u2713 Vehiculo registrado'; css = 'success'; ico = '\u2713'; scanCount.registered++; }
-  else { status = '\u26A0 No registrado'; css = 'warning'; ico = '\u26A0'; scanCount.unknown++; }
-  scanCount.total++; saveStats(); updateStats();
+
+  let st, css, ico;
+  if (DB.stolen.includes(plate)) { st = '\u26A0 VEHICULO DENUNCIADO'; css = 'danger'; ico = '\u26A0'; scanCount.stolen++; }
+  else if (DB.registered.includes(plate)) { st = '\u2713 Vehiculo registrado'; css = 'success'; ico = '\u2713'; scanCount.registered++; }
+  else { st = '\u26A0 No registrado'; css = 'warning'; ico = '\u26A0'; scanCount.unknown++; }
+  scanCount.total++;
+
+  save('plateStats', scanCount); save('plateHistory', scanHistory);
+  updateStats();
   result.className = 'camera-result ' + css;
   document.getElementById('result-icon').textContent = ico;
-  document.getElementById('result-status').textContent = status;
+  document.getElementById('result-status').textContent = st;
   scanHistory.unshift({ plate, status: css, time: Date.now() });
   if (scanHistory.length > 20) scanHistory.pop();
-  saveHistory(); updateHistory();
+  updateHistory();
   if (navigator.vibrate) navigator.vibrate(100);
   document.getElementById('reg-plate').value = plate;
 }
@@ -420,7 +405,7 @@ function updateStats() {
   document.getElementById('stat-unknown').textContent = scanCount.unknown;
 }
 
-// =============================== NAVIGATION ===============================
+// =============================== UI ===============================
 window.navigate = function (view) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -434,44 +419,40 @@ window.navigate = function (view) {
   if (view === 'call') renderContacts();
 };
 
-// =============================== WHATSAPP ===============================
 window.sendWhatsApp = function () {
-  const plate = document.getElementById('reg-plate').value.trim();
-  const vehicle = document.getElementById('reg-vehicle').value;
-  const incident = document.getElementById('reg-incident').value;
-  const location = document.getElementById('reg-location').value.trim();
-  const desc = document.getElementById('reg-desc').value.trim();
-  if (!plate) { showToast('Ingrese una patente', 'error'); return; }
-  if (!vehicle) { showToast('Seleccione tipo de vehiculo', 'error'); return; }
-  if (!incident) { showToast('Seleccione tipo de incidente', 'error'); return; }
-  const msg = ['\u{1F6A8} *REPORTE DE INCIDENTE*', '', '\u{1F539} *Patente:* ' + plate.toUpperCase(), '\u{1F539} *Vehiculo:* ' + vehicle, '\u{1F539} *Incidente:* ' + incident, location ? '\u{1F539} *Ubicacion:* ' + location : '', desc ? '\u{1F539} *Descripcion:* ' + desc : '', '', '\u{1F4F1} Enviado desde PlateDetect'].filter(Boolean).join('\n');
+  const p = document.getElementById('reg-plate').value.trim();
+  const v = document.getElementById('reg-vehicle').value;
+  const i = document.getElementById('reg-incident').value;
+  const l = document.getElementById('reg-location').value.trim();
+  const d = document.getElementById('reg-desc').value.trim();
+  if (!p || !v || !i) { showToast('Complete patente, vehiculo e incidente', 'error'); return; }
+  const msg = ['\u{1F6A8} *REPORTE DE INCIDENTE*', '', '*Patente:* ' + p.toUpperCase(), '*Vehiculo:* ' + v, '*Incidente:* ' + i, l ? '*Ubicacion:* ' + l : '', d ? '*Descripcion:* ' + d : '', '', 'Enviado desde PlateDetect'].filter(Boolean).join('\n');
   window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
-  showToast('Abriendo WhatsApp...', 'success');
 };
 
-// =============================== CONTACTS ===============================
 function renderContacts() {
-  const grid = document.getElementById('contact-grid');
-  grid.innerHTML = contacts.map(c => '<div class="contact-card"><div class="avatar ' + (c.type || 'custom') + '">' + (c.icon || '\u{1F4DE}') + '</div><div class="info"><div class="name">' + c.name + '</div><div class="phone">' + c.phone + '</div></div><button class="call-btn" onclick="callContact(\'' + c.phone + '\')"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></button></div>').join('');
+  document.getElementById('contact-grid').innerHTML = contacts.map(c =>
+    '<div class="contact-card"><div class="avatar ' + (c.type || 'custom') + '">' + (c.icon || '\u{1F4DE}') + '</div><div class="info"><div class="name">' + c.name + '</div><div class="phone">' + c.phone + '</div></div><button class="call-btn" onclick="callContact(\'' + c.phone + '\')"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></button></div>'
+  ).join('');
 }
+
 window.callContact = function (p) { window.location.href = 'tel:' + p; };
 window.addContact = function () {
   const name = document.getElementById('new-contact-name').value.trim();
   const phone = document.getElementById('new-contact-phone').value.trim();
   if (!name || !phone) { showToast('Ingrese nombre y telefono', 'error'); return; }
   contacts.push({ name, phone, type: 'custom', icon: '\u{1F4DE}' });
-  saveContacts(); renderContacts();
+  save('contacts', contacts);
+  renderContacts();
   document.getElementById('new-contact-name').value = '';
   document.getElementById('new-contact-phone').value = '';
   showToast('Contacto agregado', 'success');
 };
 
-// =============================== TOAST ===============================
 function showToast(msg, type) {
   const el = document.getElementById('toast');
   el.innerHTML = msg;
-  el.className = 'toast';
-  if (type) el.classList.add('toast-' + type);
+  el.className = 'toast' + (type ? ' toast-' + type : '');
   el.classList.add('show');
   clearTimeout(el._timer);
   el._timer = setTimeout(() => el.classList.remove('show'), 3000);
@@ -479,41 +460,26 @@ function showToast(msg, type) {
 
 // =============================== INIT ===============================
 document.addEventListener('DOMContentLoaded', function () {
-  document.getElementById('btn-home-scan').addEventListener('click', () => window.navigate('camera'));
-  document.getElementById('scan-toggle').addEventListener('change', window.toggleScan);
-  document.getElementById('btn-send-whatsapp').addEventListener('click', window.sendWhatsApp);
-  document.getElementById('btn-add-contact').addEventListener('click', window.addContact);
-
+  document.getElementById('btn-home-scan').onclick = () => window.navigate('camera');
+  document.getElementById('scan-toggle').onchange = window.toggleScan;
+  document.getElementById('btn-send-whatsapp').onclick = window.sendWhatsApp;
+  document.getElementById('btn-add-contact').onclick = window.addContact;
   document.querySelectorAll('.nav-item[data-view]').forEach(n => {
-    n.addEventListener('click', () => {
-      window.navigate(n.dataset.view);
-      if (n.dataset.view === 'camera' && !window._liteInit) { window._liteInit = true; initLiteRT(); }
-    });
+    n.onclick = () => { window.navigate(n.dataset.view); if (n.dataset.view === 'camera') initLiteRT(); };
   });
-
-  document.getElementById('cam-result').addEventListener('click', function () {
-    if (document.getElementById('result-plate').textContent !== '---') {
-      document.getElementById('reg-plate').value = document.getElementById('result-plate').textContent;
-      window.navigate('register');
-    }
-  });
-
-  updateStats(); updateHistory(); renderContacts();
-  initLiteRT();
+  document.getElementById('cam-result').onclick = function () {
+    const txt = document.getElementById('result-plate').textContent;
+    if (txt !== '---') { document.getElementById('reg-plate').value = txt; window.navigate('register'); }
+  };
+  updateStats(); updateHistory(); renderContacts(); initLiteRT();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').then(reg => {
       reg.addEventListener('updatefound', () => {
-        const sw = reg.installing;
-        sw.addEventListener('statechange', () => {
-          if (sw.state === 'installed' && navigator.serviceWorker.controller) {
-            showToast('Nueva version disponible. Recarga la pagina.', 'success');
-          }
+        reg.installing.addEventListener('statechange', function swCb() {
+          if (this.state === 'installed' && navigator.serviceWorker.controller) { showToast('Nueva version disponible. Recarga.', 'success'); }
         });
       });
     }).catch(() => {});
-
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      window.location.reload();
-    });
+    navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload());
   }
 });
