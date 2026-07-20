@@ -67,13 +67,13 @@ async function loadDetector() {
 
 // =============================== PLATE PATTERNS ===============================
 const PLATE_PATTERNS = [
-  /^[A-Z]{3}\d{3}$/,          // ABC 123
-  /^[A-Z]{2}\d{3}[A-Z]{2}$/,  // AB 123 CD (Mercosur)
-  /^\d{3}[A-Z]{3}$/,          // 123 ABC
-  /^[A-Z]{4}\d{2}$/,          // ABCD 12
-  /^[A-Z]{2}\d{4}$/,          // AB 1234
-  /^[A-Z]\d{3}[A-Z]{3}$/,     // A 123 BCD
-  /^\d{3}[A-Z]{2}\d{2}$/,     // 123 AB 45
+  // /^[A-Z]{3}\d{3}$/,          // ABC 123
+  // /^[A-Z]{2}\d{3}[A-Z]{2}$/,  // AB 123 CD (Mercosur)
+  // /^\d{3}[A-Z]{3}$/,          // 123 ABC
+  /^[A-Z]{4}\d{2}$/,          // ABCD 12 Modelo usado en chile
+  /^[A-Z]{2}\d{4}$/,          // AB 1234 Modelo usado en chile
+  // /^[A-Z]\d{3}[A-Z]{3}$/,     // A 123 BCD
+  // /^\d{3}[A-Z]{2}\d{2}$/,     // 123 AB 45
 ];
 
 const OCR_CORRECTIONS = {
