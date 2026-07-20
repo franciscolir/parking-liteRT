@@ -35,14 +35,14 @@ function navigate(view) {
   if (view === 'call') renderContacts();
 }
 
-// =============================== LITERT / MEDIAPIPE DETECTOR ===============================
+// =============================== LITERT (MediaPipe Tasks Vision) ===============================
 let detector = null;
 let detectorLoading = false;
 
 async function loadDetector() {
   if (detector || detectorLoading) return;
   detectorLoading = true;
-  document.getElementById('cam-status').textContent = 'Cargando liteRT...';
+  setStatus('Cargando liteRT...');
   try {
     const { FilesetResolver, ObjectDetector } = await import(
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/vision_bundle.js'
@@ -57,10 +57,10 @@ async function loadDetector() {
       scoreThreshold: 0.4,
       maxResults: 5,
     });
-    document.getElementById('cam-status').textContent = 'liteRT listo';
+    setStatus('liteRT listo');
   } catch (e) {
-    console.warn('liteRT no disponible, solo OCR directo:', e);
-    document.getElementById('cam-status').textContent = 'liteRT no disponible';
+    console.warn('liteRT no disponible:', e);
+    setStatus('Modo sin IA');
   }
   detectorLoading = false;
 }
@@ -74,9 +74,6 @@ const PLATE_PATTERNS = [
   /^[A-Z]{2}\d{4}$/,          // AB 1234
   /^[A-Z]\d{3}[A-Z]{3}$/,     // A 123 BCD
   /^\d{3}[A-Z]{2}\d{2}$/,     // 123 AB 45
-  /^[A-Z]{3}\d{2}[A-Z]$/,     // ABC 12 D
-  /^[A-Z]\d{4}[A-Z]$/,        // A 1234 B
-  /^\d{4}[A-Z]{3}$/,          // 1234 ABC
 ];
 
 const OCR_CORRECTIONS = {
@@ -91,152 +88,13 @@ function validatePlate(text) {
 
 function correctPlate(raw) {
   if (validatePlate(raw)) return raw;
-  const chars = [...OCR_CORRECTIONS.entries()].flatMap(([k, v]) => v.split('').map(c => [k, c]));
-
   for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i];
-    if (!OCR_CORRECTIONS[ch]) continue;
-    for (const c2 of OCR_CORRECTIONS[ch]) {
-      const t = raw.slice(0, i) + c2 + raw.slice(i + 1);
+    if (!OCR_CORRECTIONS[raw[i]]) continue;
+    for (const c of OCR_CORRECTIONS[raw[i]]) {
+      const t = raw.slice(0, i) + c + raw.slice(i + 1);
       if (validatePlate(t)) return t;
     }
   }
-
-  for (let i = 0; i < raw.length; i++) {
-    if (!OCR_CORRECTIONS[raw[i]]) continue;
-    for (const c1 of OCR_CORRECTIONS[raw[i]]) {
-      const t1 = raw.slice(0, i) + c1 + raw.slice(i + 1);
-      for (let j = 0; j < t1.length; j++) {
-        if (j === i) continue;
-        if (!OCR_CORRECTIONS[t1[j]]) continue;
-        for (const c2 of OCR_CORRECTIONS[t1[j]]) {
-          const t2 = t1.slice(0, j) + c2 + t1.slice(j + 1);
-          if (validatePlate(t2)) return t2;
-        }
-      }
-    }
-  }
-  return null;
-}
-
-// =============================== IMAGE PROCESSING ===============================
-function computeIntegral(img) {
-  const w = img.width, h = img.height, d = img.data;
-  const sat = new Uint32Array((w + 1) * (h + 1));
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
-      const g = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-      const idx = (y + 1) * (w + 1) + (x + 1);
-      sat[idx] = g + sat[idx - 1] + sat[idx - (w + 1)] - sat[idx - (w + 2)];
-      d[i] = d[i + 1] = d[i + 2] = g;
-    }
-  }
-  return { sat, w: w + 1, h: h + 1 };
-}
-
-function boxAvg(sat, sw, x, y, bw, bh) {
-  const x1 = Math.max(0, x), y1 = Math.max(0, y);
-  const x2 = Math.min(sw - 1, x + bw), y2 = Math.min(sat.length / sw - 1, y + bh);
-  const sum = sat[y2 * sw + x2] - sat[y1 * sw + x2] - sat[y2 * sw + x1] + sat[y1 * sw + x1];
-  const count = (x2 - x1) * (y2 - y1);
-  return count > 0 ? sum / count : 128;
-}
-
-function adaptiveThreshold(canvas) {
-  const ctx = canvas.getContext('2d');
-  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const w = canvas.width, h = canvas.height, d = img.data;
-  const { sat, w: sw } = computeIntegral(img);
-  const half = Math.max(2, Math.round(Math.min(w, h) / 12));
-
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const local = boxAvg(sat, sw, x - half, y - half, half * 2 + 1, half * 2 + 1);
-      const i = (y * w + x) * 4;
-      const v = d[i] > local - 8 ? 255 : 0;
-      d[i] = d[i + 1] = d[i + 2] = v;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-  return canvas;
-}
-
-function preprocessForOCR(canvas) {
-  const s = 2.5;
-  const ow = Math.max(40, Math.round(canvas.width * s));
-  const oh = Math.max(40, Math.round(canvas.height * s));
-  const out = document.createElement('canvas');
-  out.width = ow;
-  out.height = oh;
-  const ctx = out.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(canvas, 0, 0, out.width, out.height);
-  adaptiveThreshold(out);
-  return out;
-}
-
-// =============================== TESSERACT OCR ===============================
-let ocrWorker = null;
-
-async function getOCRWorker() {
-  if (!ocrWorker) {
-    ocrWorker = await Tesseract.createWorker('eng', 1, {
-      logger: m => {
-        if (m.status === 'recognizing text') {
-          document.getElementById('cam-status').textContent = 'OCR ' + Math.round(m.progress * 100) + '%';
-        }
-      },
-    });
-    await ocrWorker.setParameters({
-      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-    });
-  }
-  return ocrWorker;
-}
-
-async function tryOCR(canvas, psm) {
-  if (!canvas || canvas.width < 10 || canvas.height < 10) {
-    return { plate: null, raw: '', conf: 0 };
-  }
-  const w = await getOCRWorker();
-  await w.setParameters({ tessedit_pageseg_mode: psm.toString() });
-  const { data } = await w.recognize(canvas);
-  const text = data.text.trim().toUpperCase();
-  const conf = data.confidence || 0;
-  const cleaned = text.replace(/[^A-Z0-9]/g, '');
-
-  let best = null;
-  if (cleaned.length >= 5 && cleaned.length <= 8) {
-    best = correctPlate(cleaned) || (validatePlate(cleaned) ? cleaned : null);
-  }
-  if (!best) {
-    const m = text.match(/[A-Z0-9]{5,8}/);
-    if (m) best = correctPlate(m[0]) || (validatePlate(m[0]) ? m[0] : null);
-  }
-  return { plate: best, raw: cleaned || text.replace(/\s+/g, ''), conf };
-}
-
-async function readPlate(canvas, debugEl) {
-  // Raw OCR (PSM 7 and 8)
-  const r1 = await tryOCR(canvas, 7);
-  if (debugEl) debugEl.textContent = 'RAW: "' + r1.raw + '" conf:' + Math.round(r1.conf);
-  if (r1.plate && r1.conf > 20) return r1.plate;
-
-  const r2 = await tryOCR(canvas, 8);
-  if (debugEl) debugEl.textContent = 'RAW2: "' + r2.raw + '" conf:' + Math.round(r2.conf);
-  if (r2.plate && r2.conf > 20) return r2.plate;
-
-  // Preprocessed OCR (PSM 7 and 8)
-  const proc = preprocessForOCR(canvas);
-  const p1 = await tryOCR(proc, 7);
-  if (debugEl) debugEl.textContent = 'PP: "' + p1.raw + '" conf:' + Math.round(p1.conf);
-  if (p1.plate && p1.conf > 20) return p1.plate;
-
-  const p2 = await tryOCR(proc, 8);
-  if (debugEl) debugEl.textContent = 'PP2: "' + p2.raw + '" conf:' + Math.round(p2.conf);
-  if (p2.plate && p2.conf > 20) return p2.plate;
-
   return null;
 }
 
@@ -244,23 +102,28 @@ async function readPlate(canvas, debugEl) {
 let mediaStream = null;
 let isScanning = false;
 let scanTimer = null;
+let ocrWorker = null;
 
 async function startCamera() {
   try {
-    const constraints = {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false,
-    };
-    mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    });
     const video = document.getElementById('video');
     video.srcObject = mediaStream;
     await video.play();
-    document.getElementById('cam-status').textContent = 'Listo';
+    setStatus('Listo');
     return true;
   } catch (e) {
     showToast('Error al acceder a la camara: ' + e.message, 'error');
     return false;
   }
+}
+
+function setStatus(msg) {
+  const el = document.getElementById('cam-status');
+  if (el) el.textContent = msg;
 }
 
 function setBadgeScanning(on) {
@@ -277,11 +140,8 @@ function stopCamera() {
   const label = document.getElementById('switch-label');
   if (label) label.textContent = 'Iniciar deteccion';
   setBadgeScanning(false);
-  if (mediaStream) {
-    mediaStream.getTracks().forEach(t => t.stop());
-    mediaStream = null;
-  }
-  document.getElementById('cam-status').textContent = 'En espera';
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  setStatus('En espera');
 }
 
 async function toggleScan() {
@@ -295,7 +155,7 @@ async function toggleScan() {
     label.textContent = 'Iniciar deteccion';
     setBadgeScanning(false);
     if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
-    document.getElementById('cam-status').textContent = 'Detenido';
+    setStatus('Detenido');
     return;
   }
 
@@ -307,30 +167,80 @@ async function toggleScan() {
   isScanning = true;
   label.textContent = 'Apagar camara';
   setBadgeScanning(true);
-  document.getElementById('cam-status').textContent = 'Escaneando...';
-
+  setStatus('Escaneando...');
   await captureAndDetect();
-  scanTimer = setInterval(() => captureAndDetect(), isScanning ? 2000 : 4000);
+  scanTimer = setInterval(() => captureAndDetect(), 2500);
 }
 
+// =============================== TESSERACT WORKER ===============================
+async function getOCRWorker() {
+  if (!ocrWorker) {
+    ocrWorker = await Tesseract.createWorker('eng', 1, {
+      logger: m => {
+        if (m.status === 'recognizing text') setStatus('OCR ' + Math.round(m.progress * 100) + '%');
+      },
+    });
+    await ocrWorker.setParameters({
+      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+    });
+  }
+  return ocrWorker;
+}
+
+async function runOCR(canvas) {
+  const w = await getOCRWorker();
+  const { data } = await w.recognize(canvas);
+  const text = data.text.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (text.length >= 5 && text.length <= 8) return correctPlate(text) || (validatePlate(text) ? text : null);
+  const m = text.match(/[A-Z0-9]{5,8}/);
+  if (m) return correctPlate(m[0]) || (validatePlate(m[0]) ? m[0] : null);
+  return null;
+}
+
+// =============================== DETECTION PIPELINE ===============================
 function captureFrame() {
   const video = document.getElementById('video');
   if (!video || !video.videoWidth) return null;
-  const canvas = document.createElement('canvas');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext('2d').drawImage(video, 0, 0);
-  return canvas;
+  const c = document.createElement('canvas');
+  c.width = video.videoWidth;
+  c.height = video.videoHeight;
+  c.getContext('2d').drawImage(video, 0, 0);
+  return c;
 }
 
-function cropCanvas(source, x, y, w, h) {
-  const iw = Math.max(20, Math.round(w));
-  const ih = Math.max(20, Math.round(h));
+function cropCanvas(src, x, y, w, h) {
   const c = document.createElement('canvas');
-  c.width = iw;
-  c.height = ih;
-  c.getContext('2d').drawImage(source, Math.round(x), Math.round(y), Math.round(w), Math.round(h), 0, 0, iw, ih);
+  c.width = Math.max(30, Math.round(w));
+  c.height = Math.max(30, Math.round(h));
+  c.getContext('2d').drawImage(src, Math.round(x), Math.round(y), Math.round(w), Math.round(h), 0, 0, c.width, c.height);
   return c;
+}
+
+function preprocessForOCR(canvas) {
+  const s = 2;
+  const out = document.createElement('canvas');
+  out.width = Math.max(50, Math.round(canvas.width * s));
+  out.height = Math.max(50, Math.round(canvas.height * s));
+  const ctx = out.getContext('2d');
+  ctx.filter = 'contrast(200%) brightness(110%)';
+  ctx.drawImage(canvas, 0, 0, out.width, out.height);
+  ctx.filter = 'none';
+  return out;
+}
+
+async function detectPlateOnCrop(cropCanvas) {
+  if (cropCanvas.width < 30 || cropCanvas.height < 30) return null;
+
+  // Try raw crop
+  let plate = await runOCR(cropCanvas);
+  if (plate) return plate;
+
+  // Try preprocessed crop
+  const proc = preprocessForOCR(cropCanvas);
+  plate = await runOCR(proc);
+  if (plate) return plate;
+
+  return null;
 }
 
 async function captureAndDetect() {
@@ -342,86 +252,74 @@ async function captureAndDetect() {
 
   let plate = null;
   const debug = document.getElementById('ocr-debug');
-
-  // === Direct OCR on strategic regions ===
   const fw = frame.width, fh = frame.height;
+
+  // Approach 1: Direct OCR on center regions (close-up plates)
   const regions = [
-    // Center band (where users naturally point)
-    { x: fw * 0.1, y: fh * 0.3,  w: fw * 0.8, h: fh * 0.4 },
-    // Lower-center (common for close plates)
-    { x: fw * 0.15, y: fh * 0.45, w: fw * 0.7, h: fh * 0.35 },
-    // Full-width strip (catches misaligned shots)
+    { x: fw * 0.15, y: fh * 0.3,  w: fw * 0.7, h: fh * 0.4 },
+    { x: fw * 0.1,  y: fh * 0.45, w: fw * 0.8, h: fh * 0.35 },
     { x: 0,         y: fh * 0.35, w: fw,       h: fh * 0.3 },
   ];
 
   for (const r of regions) {
     if (plate) break;
-    document.getElementById('cam-status').textContent = 'Buscando...';
+    setStatus('Buscando...');
     try {
       const crop = cropCanvas(frame, r.x, r.y, r.w, r.h);
-      plate = await readPlate(crop, debug);
+      plate = await detectPlateOnCrop(crop);
+      if (plate && debug) debug.textContent = 'OK: ' + plate;
     } catch (e) { /* skip */ }
   }
 
-  // === Vehicle detection via liteRT / MediaPipe ===
+  // Approach 2: Vehicle detection via liteRT
   if (!plate && detector) {
     try {
-      document.getElementById('cam-status').textContent = 'Buscando vehiculo...';
+      setStatus('Buscando vehiculo...');
       const results = detector.detect(video);
       if (results && results.detections) {
         const vehicles = results.detections
-          .filter(d => {
-            const cat = d.categories[0];
-            return cat && ['car', 'truck', 'bus', 'motorcycle'].includes(cat.categoryName) && cat.score > 0.35;
-          });
+          .filter(d => d.categories[0] && ['car', 'truck', 'bus', 'motorcycle'].includes(d.categories[0].categoryName) && d.categories[0].score > 0.35);
 
-        if (vehicles.length > 0) {
-          const best = vehicles[0];
-          const bb = best.boundingBox;
+        for (const v of vehicles) {
+          if (plate) break;
+          const bb = v.boundingBox;
           const bx = bb.originX, by = bb.originY, bw = bb.width, bh = bb.height;
           const pc = cropCanvas(frame, bx + bw * 0.12, by + bh * 0.5, bw * 0.76, bh * 0.35);
-          plate = await readPlate(pc, debug);
+          plate = await detectPlateOnCrop(pc);
+          if (plate && debug) debug.textContent = 'VEH OK: ' + plate;
         }
       }
-    } catch (e) { console.warn('liteRT detection error:', e); }
+    } catch (e) { console.warn('liteRT error:', e); }
   }
 
   if (plate) {
     processPlate(plate);
-    if (scanTimer) { clearInterval(scanTimer); scanTimer = setInterval(() => captureAndDetect(), 3000); }
   } else {
-    document.getElementById('cam-status').textContent = 'Sin deteccion';
-    if (scanTimer) { clearInterval(scanTimer); scanTimer = setInterval(() => captureAndDetect(), 2000); }
+    setStatus('Sin deteccion');
   }
 }
 
 function processPlate(plate) {
-  document.getElementById('cam-status').textContent = 'Patente: ' + plate;
+  setStatus('Patente: ' + plate);
 
   const result = document.getElementById('cam-result');
-  const icon = document.getElementById('result-icon');
-  const plateEl = document.getElementById('result-plate');
-  const statusEl = document.getElementById('result-status');
-  const debug = document.getElementById('ocr-debug');
-
   result.classList.remove('hidden', 'success', 'danger', 'warning');
-  plateEl.textContent = plate;
-  if (debug) debug.textContent = '';
+  document.getElementById('result-plate').textContent = plate;
 
   let status, cssClass, ico;
 
   if (DB.stolen.includes(plate)) {
-    status = '&#9888; VEHICULO DENUNCIADO - Tomar precauciones';
+    status = '&#9888; VEHICULO DENUNCIADO';
     cssClass = 'danger';
     ico = '&#9888;';
     scanCount.stolen++;
   } else if (DB.registered.includes(plate)) {
-    status = '&#10003; Vehiculo registrado - Sin novedades';
+    status = '&#10003; Vehiculo registrado';
     cssClass = 'success';
     ico = '&#10003;';
     scanCount.registered++;
   } else {
-    status = '&#9888; No registrado en la base de datos local';
+    status = '&#9888; No registrado';
     cssClass = 'warning';
     ico = '&#9888;';
     scanCount.unknown++;
@@ -432,8 +330,8 @@ function processPlate(plate) {
   updateStats();
 
   result.className = 'camera-result ' + cssClass;
-  icon.innerHTML = ico;
-  statusEl.innerHTML = status;
+  document.getElementById('result-icon').innerHTML = ico;
+  document.getElementById('result-status').innerHTML = status;
 
   scanHistory.unshift({ plate, status: cssClass, time: Date.now() });
   if (scanHistory.length > 20) scanHistory.pop();
@@ -534,7 +432,6 @@ document.addEventListener('DOMContentLoaded', function () {
   updateStats();
   updateHistory();
   renderContacts();
-
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
