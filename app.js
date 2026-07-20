@@ -149,9 +149,11 @@ function adaptiveThreshold(canvas) {
 
 function preprocessForOCR(canvas) {
   const s = 2.5;
+  const ow = Math.max(40, Math.round(canvas.width * s));
+  const oh = Math.max(40, Math.round(canvas.height * s));
   const out = document.createElement('canvas');
-  out.width = Math.round(canvas.width * s);
-  out.height = Math.round(canvas.height * s);
+  out.width = ow;
+  out.height = oh;
   const ctx = out.getContext('2d');
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(canvas, 0, 0, out.width, out.height);
@@ -179,6 +181,9 @@ async function getOCRWorker() {
 }
 
 async function tryOCR(canvas, psm) {
+  if (!canvas || canvas.width < 10 || canvas.height < 10) {
+    return { plate: null, raw: '', conf: 0 };
+  }
   const w = await getOCRWorker();
   await w.setParameters({ tessedit_pageseg_mode: psm.toString() });
   const { data } = await w.recognize(canvas);
@@ -304,10 +309,12 @@ function captureFrame() {
 }
 
 function cropCanvas(source, x, y, w, h) {
+  const iw = Math.max(20, Math.round(w));
+  const ih = Math.max(20, Math.round(h));
   const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.round(w));
-  c.height = Math.max(1, Math.round(h));
-  c.getContext('2d').drawImage(source, Math.round(x), Math.round(y), Math.round(w), Math.round(h), 0, 0, c.width, c.height);
+  c.width = iw;
+  c.height = ih;
+  c.getContext('2d').drawImage(source, Math.round(x), Math.round(y), Math.round(w), Math.round(h), 0, 0, iw, ih);
   return c;
 }
 
