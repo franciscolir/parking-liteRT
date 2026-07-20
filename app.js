@@ -102,11 +102,20 @@ async function startCamera() {
   }
 }
 
+function setBadgeScanning(on) {
+  const badge = document.getElementById('cam-status');
+  if (on) badge.classList.add('scanning');
+  else badge.classList.remove('scanning');
+}
+
 function stopCamera() {
   if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
   isScanning = false;
-  if (document.getElementById('btn-scan-text'))
-    document.getElementById('btn-scan-text').textContent = 'Escanear';
+  const toggle = document.getElementById('scan-toggle');
+  if (toggle) toggle.checked = false;
+  const label = document.getElementById('switch-label');
+  if (label) label.textContent = 'Iniciar detecci\u00F3n';
+  setBadgeScanning(false);
   if (mediaStream) {
     mediaStream.getTracks().forEach(t => t.stop());
     mediaStream = null;
@@ -115,33 +124,38 @@ function stopCamera() {
 }
 
 async function toggleScan() {
-  const btn = document.getElementById('btn-scan');
-  const txt = document.getElementById('btn-scan-text');
+  const toggle = document.getElementById('scan-toggle');
+  const label = document.getElementById('switch-label');
 
   if (isScanning) {
     isScanning = false;
     if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
-    txt.textContent = 'Escanear';
-    btn.classList.remove('scanning');
-    document.getElementById('cam-status').textContent = 'En pausa';
+    toggle.checked = false;
+    label.textContent = 'Iniciar detecci\u00F3n';
+    setBadgeScanning(false);
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
+    }
+    document.getElementById('cam-status').textContent = 'Detenido';
     return;
   }
 
   if (!mediaStream) {
     const ok = await startCamera();
-    if (!ok) return;
+    if (!ok) { toggle.checked = false; return; }
   }
 
   const modelOk = await loadModel();
-  if (!modelOk) { showToast('Esperando modelo IA...', 'error'); return; }
+  if (!modelOk) { toggle.checked = false; showToast('Error al cargar IA', 'error'); return; }
 
   isScanning = true;
-  txt.textContent = 'Detener';
-  btn.classList.add('scanning');
+  label.textContent = 'Apagar c\u00E1mara';
+  setBadgeScanning(true);
   document.getElementById('cam-status').textContent = 'Escaneando...';
 
   await captureAndDetect();
-  scanTimer = setInterval(captureAndDetect, 4000);
+  scanTimer = setInterval(captureAndDetect, 2500);
 }
 
 async function captureAndDetect() {

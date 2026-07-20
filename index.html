@@ -65,16 +65,18 @@
     </div>
   </div>
   <div class="camera-controls">
-    <button class="btn-scan" id="btn-scan" onclick="toggleScan()">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
-      <span id="btn-scan-text">Escanear</span>
-    </button>
-    <button class="btn-clear" onclick="clearCameraResult()">Limpiar</button>
+    <label class="switch-container">
+      <input type="checkbox" id="scan-toggle" onchange="toggleScan()">
+      <span class="switch-slider"></span>
+      <span class="switch-label" id="switch-label">Iniciar detecci&oacute;n</span>
+    </label>
   </div>
   <div class="camera-result hidden" id="cam-result">
-    <div class="plate-icon" id="result-icon">&#9989;</div>
-    <div class="plate-number" id="result-plate">ABC123</div>
-    <div class="plate-status" id="result-status">Veh&iacute;culo registrado</div>
+    <div class="result-card-inner">
+      <div class="plate-icon" id="result-icon">&#128663;</div>
+      <div class="plate-number" id="result-plate">---</div>
+      <div class="plate-status" id="result-status">Esperando detecci&oacute;n...</div>
+    </div>
   </div>
   <div class="camera-history" id="cam-history">
     <h3>&Uacute;ltimas detecciones</h3>
