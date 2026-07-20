@@ -112,8 +112,7 @@ async function detectVehicles(frame) {
   for (const out of outputs) {
     const data = await out.toTypedArray();
     const len = data.length;
-    if (len === 4) continue; // num_detections scalar
-    const dim = Math.round(Math.pow(len, 1 / 3));
+    if (len === 4) continue;
     if (len > 100 && len < 1000 && len % 4 === 0) {
       const n = len / 4;
       for (let i = 0; i < n; i++) {
@@ -307,7 +306,7 @@ async function captureAndDetect() {
   const frame = captureFrame();
   if (!frame) return;
 
-  let plate = null, vehicles = [];
+  let plate = null;
   const fw = frame.width, fh = frame.height;
 
   // Approach 1: Direct OCR on center regions
@@ -326,7 +325,7 @@ async function captureAndDetect() {
   if (!plate) {
     try {
       setStatus('liteRT.js detectando...');
-      vehicles = await detectVehicles(video);
+      const vehicles = await detectVehicles(video);
       for (const v of vehicles) {
         if (plate) break;
         setStatus('Vehiculo -> OCR');
@@ -436,18 +435,18 @@ function showToast(msg, type) {
 
 // =============================== INIT ===============================
 document.addEventListener('DOMContentLoaded', function () {
-  [document.getElementById('btn-home-scan'), document.getElementById('scan-toggle')].forEach(el => {
-    if (el && el.id === 'scan-toggle') el.addEventListener('change', window.toggleScan);
-    else if (el) el.addEventListener('click', () => window.navigate('camera'));
-  });
+  document.getElementById('btn-home-scan').addEventListener('click', () => window.navigate('camera'));
+  document.getElementById('scan-toggle').addEventListener('change', window.toggleScan);
   document.getElementById('btn-send-whatsapp').addEventListener('click', window.sendWhatsApp);
   document.getElementById('btn-add-contact').addEventListener('click', window.addContact);
+
   document.querySelectorAll('.nav-item[data-view]').forEach(n => {
-    n.addEventListener('click', () => window.navigate(n.dataset.view));
+    n.addEventListener('click', () => {
+      window.navigate(n.dataset.view);
+      if (n.dataset.view === 'camera' && !window._liteInit) { window._liteInit = true; initLiteRT(); }
+    });
   });
-  document.querySelectorAll('.nav-item[data-view="camera"]').forEach(n => {
-    n.addEventListener('click', () => { if (!window._liteInit) { window._liteInit = true; initLiteRT(); } });
-  });
+
   document.getElementById('cam-result').addEventListener('click', function () {
     if (document.getElementById('result-plate').textContent !== '---') {
       document.getElementById('reg-plate').value = document.getElementById('result-plate').textContent;
@@ -457,5 +456,20 @@ document.addEventListener('DOMContentLoaded', function () {
 
   updateStats(); updateHistory(); renderContacts();
   initLiteRT();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        sw.addEventListener('statechange', () => {
+          if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+            showToast('Nueva version disponible. Recarga la pagina.', 'success');
+          }
+        });
+      });
+    }).catch(() => {});
+
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      window.location.reload();
+    });
+  }
 });
