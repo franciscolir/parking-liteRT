@@ -452,6 +452,23 @@ html, body {
 .camera-result.danger .plate-number { color: var(--danger); }
 .camera-result.warning .plate-number { color: var(--warning); }
 
+.ocr-debug {
+  margin: -4px 16px 8px;
+  padding: 6px 10px;
+  background: rgba(0,0,0,.4);
+  border-radius: 6px;
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  color: var(--text-muted);
+  min-height: 16px;
+  word-break: break-all;
+  line-height: 1.4;
+  display: none;
+}
+
+/* show debug in development - remove for production */
+/* .ocr-debug { display: block; } */
+
 .camera-history { margin: 0 16px 12px; }
 
 .camera-history h3 {
