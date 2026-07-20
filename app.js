@@ -22,6 +22,7 @@ let contacts = JSON.parse(localStorage.getItem('contacts') || '[]');
 if (!contacts.length) contacts = JSON.parse(JSON.stringify(DEFAULT_CONTACTS));
 let mediaStream = null, isScanning = false, scanTimer = null;
 let liteModel = null, litertReady = false, INPUT_SIZE = 320;
+let ocrWorker = null;
 
 // =============================== PERSISTENCE ===============================
 function save(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
@@ -230,9 +231,37 @@ function matchChar(density) {
   return bestScore > 6 ? best : null;
 }
 
-function tick() { return new Promise(r => setTimeout(r, 0)); }
+function initWorker() {
+  try {
+    ocrWorker = new Worker('ocr-worker.js');
+  } catch (e) {
+    console.warn('Worker no disponible, OCR en main thread');
+  }
+}
 
-function readPlate(canvas) {
+function readPlateInWorker(canvas) {
+  return new Promise(resolve => {
+    if (!ocrWorker) {
+      try { const r = readPlateSync(canvas); resolve(r); } catch { resolve(null); }
+      return;
+    }
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const handler = e => {
+      ocrWorker.removeEventListener('message', handler);
+      resolve(e.data.plate);
+    };
+    ocrWorker.addEventListener('message', handler);
+    try {
+      ocrWorker.postMessage({ imageData, width: canvas.width, height: canvas.height }, [imageData.data.buffer]);
+    } catch {
+      ocrWorker.postMessage({ imageData, width: canvas.width, height: canvas.height });
+    }
+  });
+}
+
+// Fallback: OCR sincrono en main thread
+function readPlateSync(canvas) {
   if (canvas.width < 40 || canvas.height < 20) return null;
 
   // Limit input size for performance
@@ -361,7 +390,7 @@ async function detect() {
       const rx = fw * 0.15 + sx * (fw * 0.7 / 4);
       const ry = fh * 0.25 + sy * (fh * 0.4 / 3);
       setStatus('Buscando...');
-      try { plate = readPlate(crop(frame, rx, ry, scanW, scanH)); } catch (e) {}
+      try { plate = await readPlateInWorker(crop(frame, rx, ry, scanW, scanH)); } catch (e) {}
       await tick();
     }
   }
@@ -376,7 +405,7 @@ async function detect() {
         if (plate) break;
         setStatus('Leyendo patente...');
         await tick();
-        plate = readPlate(crop(frame, v.x + v.w * 0.12, v.y + v.h * 0.5, v.w * 0.76, v.h * 0.35));
+        plate = await readPlateInWorker(crop(frame, v.x + v.w * 0.12, v.y + v.h * 0.5, v.w * 0.76, v.h * 0.35));
       }
     } catch (e) { console.warn('liteRT error:', e); }
   }
@@ -498,7 +527,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const txt = document.getElementById('result-plate').textContent;
     if (txt !== '---') { document.getElementById('reg-plate').value = txt; window.navigate('register'); }
   };
-  updateStats(); updateHistory(); renderContacts(); initLiteRT();
+  updateStats(); updateHistory(); renderContacts(); initLiteRT(); initWorker();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }

@@ -4,6 +4,7 @@ const ASSETS = [
   '/parking-liteRT/index.html',
   '/parking-liteRT/style.css',
   '/parking-liteRT/app.js',
+  '/parking-liteRT/ocr-worker.js',
   '/parking-liteRT/manifest.json',
 ];
 
