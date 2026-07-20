@@ -158,12 +158,45 @@ async function toggleScan() {
   scanTimer = setInterval(captureAndDetect, 2500);
 }
 
+function captureFrame() {
+  const video = document.getElementById('video');
+  if (!video || !video.videoWidth) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  return canvas;
+}
+
+function cropCanvas(source, x, y, w, h) {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w));
+  c.height = Math.max(1, Math.round(h));
+  c.getContext('2d').drawImage(source, Math.round(x), Math.round(y), Math.round(w), Math.round(h), 0, 0, c.width, c.height);
+  return c;
+}
+
+async function readPlate(canvas) {
+  const w = await getOCRWorker();
+  const { data } = await w.recognize(canvas);
+  const text = data.text.trim().toUpperCase();
+  const cleaned = text.replace(/[^A-Z0-9]/g, '');
+  if (cleaned.length >= 5 && cleaned.length <= 8) return cleaned;
+  const match = text.match(/[A-Z0-9]{5,8}/);
+  return match ? match[0] : null;
+}
+
 async function captureAndDetect() {
   const video = document.getElementById('video');
   if (!video || !video.videoWidth || !cocoModel) return;
 
-  document.getElementById('cam-status').textContent = 'Detectando veh&iacute;culos...';
+  const frame = captureFrame();
+  if (!frame) return;
 
+  let plate = null;
+  document.getElementById('cam-status').textContent = 'Buscando...';
+
+  // Approach 1: detect vehicle -> crop plate region -> OCR
   try {
     const predictions = await cocoModel.detect(video);
     const VEHICLE_CLASSES = ['car', 'truck', 'bus', 'motorcycle'];
@@ -171,53 +204,37 @@ async function captureAndDetect() {
       .filter(p => VEHICLE_CLASSES.includes(p.class) && p.score > 0.4)
       .sort((a, b) => b.score - a.score);
 
-    if (vehicles.length === 0) {
-      document.getElementById('cam-status').textContent = 'Sin veh&iacute;culo detectado';
-      return;
-    }
-
-    const best = vehicles[0];
-    document.getElementById('cam-status').textContent = best.class + ' detectado ' + Math.round(best.score * 100) + '%';
-
-    const [bx, by, bw, bh] = best.bbox;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0);
-
-    const plateX = bx + bw * 0.15;
-    const plateY = by + bh * 0.55;
-    const plateW = bw * 0.7;
-    const plateH = bh * 0.3;
-
-    const cropCanvas = document.createElement('canvas');
-    cropCanvas.width = Math.max(1, Math.round(plateW));
-    cropCanvas.height = Math.max(1, Math.round(plateH));
-    const cropCtx = cropCanvas.getContext('2d');
-    cropCtx.drawImage(canvas, Math.round(plateX), Math.round(plateY), Math.round(plateW), Math.round(plateH), 0, 0, cropCanvas.width, cropCanvas.height);
-
-    document.getElementById('cam-status').textContent = 'Leyendo patente...';
-
-    const w = await getOCRWorker();
-    const { data } = await w.recognize(cropCanvas);
-    const text = data.text.trim().toUpperCase();
-    const cleaned = text.replace(/[^A-Z0-9]/g, '');
-
-    if (cleaned.length >= 5 && cleaned.length <= 8) {
-      processPlate(cleaned);
-    } else {
-      const match = text.match(/[A-Z0-9]{5,8}/);
-      if (match) {
-        processPlate(match[0]);
-      } else {
-        document.getElementById('cam-status').textContent = 'No se pudo leer la patente';
-      }
+    if (vehicles.length > 0) {
+      const best = vehicles[0];
+      document.getElementById('cam-status').textContent = best.class + ' -> leyendo patente';
+      const [bx, by, bw, bh] = best.bbox;
+      const pc = cropCanvas(frame, bx + bw * 0.12, by + bh * 0.5, bw * 0.76, bh * 0.35);
+      plate = await readPlate(pc);
+      if (plate) document.getElementById('cam-status').textContent = 'Patente: ' + plate;
     }
   } catch (e) {
-    console.warn('Detection error:', e);
-    document.getElementById('cam-status').textContent = 'Error de detecci&oacute;n';
+    console.warn('Vehicle detection error:', e);
+  }
+
+  // Approach 2: direct OCR on center scan region (for close-up plates)
+  if (!plate) {
+    try {
+      document.getElementById('cam-status').textContent = 'Buscando patente directo...';
+      const cw = frame.width * 0.75;
+      const ch = frame.height * 0.35;
+      const cx = (frame.width - cw) / 2;
+      const cy = (frame.height - ch) / 2;
+      const centerCrop = cropCanvas(frame, cx, cy, cw, ch);
+      plate = await readPlate(centerCrop);
+    } catch (e) {
+      console.warn('Direct OCR error:', e);
+    }
+  }
+
+  if (plate) {
+    processPlate(plate);
+  } else {
+    document.getElementById('cam-status').textContent = 'Sin detecci\u00F3n';
   }
 }
 
