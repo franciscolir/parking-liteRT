@@ -66,6 +66,126 @@ let isScanning = false;
 let scanTimer = null;
 let ocrWorker = null;
 
+const PLATE_PATTERNS = [
+  /^[A-Z]{3}\d{3}$/,          // ABC 123
+  /^[A-Z]{2}\d{3}[A-Z]{2}$/,  // AB 123 CD (Mercosur)
+  /^\d{3}[A-Z]{3}$/,          // 123 ABC
+  /^[A-Z]\d{3}[A-Z]{3}$/,     // A 123 BCD
+  /^\d{3}[A-Z]{2}\d{2}$/,     // 123 AB 45
+];
+
+const OCR_CORRECTIONS = {
+  '0': 'O', 'O': '0',
+  '1': 'I', 'I': '1',
+  '2': 'Z', 'Z': '2',
+  '5': 'S', 'S': '5',
+  '8': 'B', 'B': '8',
+  '6': 'G', 'G': '6',
+  '4': 'A', 'A': '4',
+};
+
+function validatePlate(text) {
+  return PLATE_PATTERNS.some(p => p.test(text));
+}
+
+function correctPlate(raw) {
+  if (validatePlate(raw)) return raw;
+
+  for (let i = 0; i < raw.length; i++) {
+    const swaps = OCR_CORRECTIONS[raw[i]];
+    if (!swaps) continue;
+    for (const ch of swaps) {
+      const test = raw.slice(0, i) + ch + raw.slice(i + 1);
+      if (validatePlate(test)) return test;
+    }
+  }
+
+  for (let i = 0; i < raw.length; i++) {
+    const swaps = OCR_CORRECTIONS[raw[i]];
+    if (!swaps) continue;
+    for (const ch of swaps) {
+      const test = raw.slice(0, i) + ch + raw.slice(i + 1);
+      for (let j = 0; j < test.length; j++) {
+        if (j === i) continue;
+        const swaps2 = OCR_CORRECTIONS[test[j]];
+        if (!swaps2) continue;
+        for (const ch2 of swaps2) {
+          const test2 = test.slice(0, j) + ch2 + test.slice(j + 1);
+          if (validatePlate(test2)) return test2;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function adaptiveThreshold(canvas, blockSize) {
+  const ctx = canvas.getContext('2d');
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data;
+  const w = canvas.width;
+  const h = canvas.height;
+  const half = Math.floor(blockSize / 2);
+
+  // Grayscale
+  for (let i = 0; i < d.length; i += 4) {
+    const g = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+    d[i] = d[i + 1] = d[i + 2] = g;
+  }
+
+  const gray = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      gray[y * w + x] = d[(y * w + x) * 4];
+    }
+  }
+
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sum = 0, count = 0;
+      for (let ky = -half; ky <= half; ky++) {
+        for (let kx = -half; kx <= half; kx++) {
+          const px = x + kx;
+          const py = y + ky;
+          if (px >= 0 && px < w && py >= 0 && py < h) {
+            sum += gray[py * w + px];
+            count++;
+          }
+        }
+      }
+      const localThresh = sum / count - 10;
+      out[y * w + x] = gray[y * w + x] > localThresh ? 255 : 0;
+    }
+  }
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const v = out[y * w + x];
+      d[i] = d[i + 1] = d[i + 2] = v;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+function preprocessForOCR(canvas) {
+  const s = 2.5;
+  const out = document.createElement('canvas');
+  out.width = Math.round(canvas.width * s);
+  out.height = Math.round(canvas.height * s);
+  const ctx = out.getContext('2d');
+  ctx.scale(s, s);
+  ctx.drawImage(canvas, 0, 0);
+  ctx.scale(1 / s, 1 / s);
+  ctx.filter = 'contrast(200%) brightness(110%)';
+  ctx.drawImage(canvas, 0, 0);
+  ctx.filter = 'none';
+  adaptiveThreshold(out, Math.max(3, Math.round(Math.min(out.width, out.height) / 10) * 2 + 1));
+  return out;
+}
+
 async function getOCRWorker() {
   if (!ocrWorker) {
     ocrWorker = await Tesseract.createWorker('eng', 1, {
@@ -81,31 +201,6 @@ async function getOCRWorker() {
     });
   }
   return ocrWorker;
-}
-
-function preprocessForOCR(canvas) {
-  const s = 2;
-  const out = document.createElement('canvas');
-  out.width = canvas.width * s;
-  out.height = canvas.height * s;
-  const ctx = out.getContext('2d');
-  ctx.scale(s, s);
-  ctx.drawImage(canvas, 0, 0);
-  const img = ctx.getImageData(0, 0, out.width, out.height);
-  const d = img.data;
-  let sum = 0;
-  for (let i = 0; i < d.length; i += 4) {
-    const g = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-    d[i] = d[i + 1] = d[i + 2] = g;
-    sum += g;
-  }
-  const thresh = sum / (d.length / 4);
-  for (let i = 0; i < d.length; i += 4) {
-    const v = d[i] > thresh ? 255 : 0;
-    d[i] = d[i + 1] = d[i + 2] = v;
-  }
-  ctx.putImageData(img, 0, 0);
-  return out;
 }
 
 async function startCamera() {
@@ -206,9 +301,18 @@ async function tryOCR(canvas, psm) {
   const { data } = await w.recognize(canvas);
   const text = data.text.trim().toUpperCase();
   const cleaned = text.replace(/[^A-Z0-9]/g, '');
-  if (cleaned.length >= 5 && cleaned.length <= 8) return cleaned;
+  if (cleaned.length >= 5 && cleaned.length <= 8) {
+    const corrected = correctPlate(cleaned);
+    if (corrected) return corrected;
+    if (validatePlate(cleaned)) return cleaned;
+  }
   const m = text.match(/[A-Z0-9]{5,8}/);
-  return m ? m[0] : null;
+  if (m) {
+    const corrected = correctPlate(m[0]);
+    if (corrected) return corrected;
+    if (validatePlate(m[0])) return m[0];
+  }
+  return null;
 }
 
 async function readPlate(canvas) {
@@ -236,17 +340,18 @@ async function captureAndDetect() {
   let plate = null;
   document.getElementById('cam-status').textContent = 'Analizando...';
 
-  // Approach 1: direct OCR on multiple center regions (close-up plates)
-  const cw = frame.width * 0.75;
-  const ch = frame.height * 0.35;
+  const cw = frame.width * 0.7;
+  const ch = frame.height * 0.3;
   const cx = (frame.width - cw) / 2;
   const cy = (frame.height - ch) / 2;
 
   const regions = [
     { x: cx, y: cy, w: cw, h: ch },
-    { x: cx + cw * 0.1, y: cy + ch * 0.1, w: cw * 0.8, h: ch * 0.8 },
-    { x: cx + cw * 0.2, y: cy + ch * 0.05, w: cw * 0.6, h: ch * 0.9 },
-    { x: cx + cw * 0.05, y: cy + ch * 0.25, w: cw * 0.9, h: ch * 0.5 },
+    { x: cx + cw * 0.15, y: cy + ch * 0.1, w: cw * 0.7, h: ch * 0.8 },
+    { x: cx + cw * 0.05, y: cy + ch * 0.2, w: cw * 0.9, h: ch * 0.6 },
+    { x: cx + cw * 0.05, y: cy + ch * 0.35, w: cw * 0.9, h: ch * 0.4 },
+    { x: 0, y: frame.height * 0.5, w: frame.width, h: frame.height * 0.25 },
+    { x: frame.width * 0.1, y: frame.height * 0.55, w: frame.width * 0.8, h: frame.height * 0.15 },
   ];
 
   for (const r of regions) {
@@ -258,10 +363,9 @@ async function captureAndDetect() {
     } catch (e) { /* skip */ }
   }
 
-  // Approach 2: detect vehicle -> crop plate region -> OCR
   if (!plate && cocoModel) {
     try {
-      document.getElementById('cam-status').textContent = 'Buscando veh&iacute;culo...';
+      document.getElementById('cam-status').textContent = 'Buscando veh\u00EDculo...';
       const predictions = await cocoModel.detect(video);
       const vehicles = predictions
         .filter(p => ['car', 'truck', 'bus', 'motorcycle'].includes(p.class) && p.score > 0.35)
