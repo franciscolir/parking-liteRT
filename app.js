@@ -27,7 +27,10 @@ let liteModel = null, litertReady = false, INPUT_SIZE = 320;
 function save(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
 
 // =============================== LITERT.JS - INIT ===============================
+let liteLoading = false;
 async function initLiteRT() {
+  if (liteModel || litertReady || liteLoading) return;
+  liteLoading = true;
   setStatus('Cargando liteRT.js...');
   try {
     await loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core/wasm/', { jspi: true });
@@ -38,10 +41,10 @@ async function initLiteRT() {
     INPUT_SIZE = liteModel.getInputDetails()[0]?.shape[1] || 320;
     console.log('liteRT outputs:', liteModel.getOutputDetails().map(d => d.name + ' ' + JSON.stringify(d.shape)));
     setStatus('liteRT.js listo');
-    litertReady = true;
+    litertReady = true; liteLoading = false;
   } catch (e) {
     console.warn('liteRT.js no disponible:', e);
-    setStatus('Modo sin IA');
+    setStatus('Modo sin IA'); liteLoading = false;
   }
 }
 
@@ -234,7 +237,7 @@ function readPlate(canvas) {
   const scaled = document.createElement('canvas');
   scaled.width = Math.max(60, Math.round(canvas.width * s));
   scaled.height = Math.max(60, Math.round(canvas.height * s));
-  scaled.getContext('2d').drawImage(canvas, 0, 0, scaled.width, scaled.height);
+  scaled.getContext('2d', { willReadFrequently: true }).drawImage(canvas, 0, 0, scaled.width, scaled.height);
   binarize(scaled);
 
   const chars = segmentChars(scaled);
