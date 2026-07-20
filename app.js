@@ -38,28 +38,50 @@ function navigate(view) {
   if (view === 'call') renderContacts();
 }
 
+// =============================== IA MODEL ===============================
+let cocoModel = null;
+let modelLoading = false;
+
+async function loadModel() {
+  if (cocoModel) return true;
+  if (modelLoading) return false;
+  modelLoading = true;
+  try {
+    document.getElementById('cam-status').textContent = 'Cargando modelo IA...';
+    cocoModel = await cocoSsd.load();
+    modelLoading = false;
+    document.getElementById('cam-status').textContent = 'Modelo listo';
+    return true;
+  } catch (e) {
+    modelLoading = false;
+    showToast('Error al cargar modelo IA: ' + e.message, 'error');
+    document.getElementById('cam-status').textContent = 'Error modelo';
+    return false;
+  }
+}
+
 // =============================== CAMERA ===============================
 let mediaStream = null;
 let isScanning = false;
 let scanTimer = null;
-let worker = null;
+let ocrWorker = null;
 
-async function getWorker() {
-  if (!worker) {
-    worker = await Tesseract.createWorker('eng', 1, {
+async function getOCRWorker() {
+  if (!ocrWorker) {
+    ocrWorker = await Tesseract.createWorker('eng', 1, {
       logger: m => {
         if (m.status === 'recognizing text') {
           document.getElementById('cam-status').textContent =
-            'Reconociendo... ' + Math.round(m.progress * 100) + '%';
+            'OCR ' + Math.round(m.progress * 100) + '%';
         }
       },
     });
-    await worker.setParameters({
+    await ocrWorker.setParameters({
       tessedit_pageseg_mode: '7',
       tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
     });
   }
-  return worker;
+  return ocrWorker;
 }
 
 async function startCamera() {
@@ -110,40 +132,61 @@ async function toggleScan() {
     if (!ok) return;
   }
 
+  const modelOk = await loadModel();
+  if (!modelOk) { showToast('Esperando modelo IA...', 'error'); return; }
+
   isScanning = true;
   txt.textContent = 'Detener';
   btn.classList.add('scanning');
   document.getElementById('cam-status').textContent = 'Escaneando...';
 
   await captureAndDetect();
-  scanTimer = setInterval(captureAndDetect, 3000);
+  scanTimer = setInterval(captureAndDetect, 4000);
 }
 
 async function captureAndDetect() {
   const video = document.getElementById('video');
-  if (!video || !video.videoWidth) return;
+  if (!video || !video.videoWidth || !cocoModel) return;
 
-  const canvas = document.createElement('canvas');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0);
-
-  const cropW = canvas.width * 0.75;
-  const cropH = canvas.height * 0.35;
-  const cropX = (canvas.width - cropW) / 2;
-  const cropY = (canvas.height - cropH) / 2;
-
-  const cropCanvas = document.createElement('canvas');
-  cropCanvas.width = cropW;
-  cropCanvas.height = cropH;
-  const cropCtx = cropCanvas.getContext('2d');
-  cropCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-
-  document.getElementById('cam-status').textContent = 'Procesando...';
+  document.getElementById('cam-status').textContent = 'Detectando veh&iacute;culos...';
 
   try {
-    const w = await getWorker();
+    const predictions = await cocoModel.detect(video);
+    const VEHICLE_CLASSES = ['car', 'truck', 'bus', 'motorcycle'];
+    const vehicles = predictions
+      .filter(p => VEHICLE_CLASSES.includes(p.class) && p.score > 0.4)
+      .sort((a, b) => b.score - a.score);
+
+    if (vehicles.length === 0) {
+      document.getElementById('cam-status').textContent = 'Sin veh&iacute;culo detectado';
+      return;
+    }
+
+    const best = vehicles[0];
+    document.getElementById('cam-status').textContent = best.class + ' detectado ' + Math.round(best.score * 100) + '%';
+
+    const [bx, by, bw, bh] = best.bbox;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0);
+
+    const plateX = bx + bw * 0.15;
+    const plateY = by + bh * 0.55;
+    const plateW = bw * 0.7;
+    const plateH = bh * 0.3;
+
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = Math.max(1, Math.round(plateW));
+    cropCanvas.height = Math.max(1, Math.round(plateH));
+    const cropCtx = cropCanvas.getContext('2d');
+    cropCtx.drawImage(canvas, Math.round(plateX), Math.round(plateY), Math.round(plateW), Math.round(plateH), 0, 0, cropCanvas.width, cropCanvas.height);
+
+    document.getElementById('cam-status').textContent = 'Leyendo patente...';
+
+    const w = await getOCRWorker();
     const { data } = await w.recognize(cropCanvas);
     const text = data.text.trim().toUpperCase();
     const cleaned = text.replace(/[^A-Z0-9]/g, '');
@@ -155,12 +198,12 @@ async function captureAndDetect() {
       if (match) {
         processPlate(match[0]);
       } else {
-        document.getElementById('cam-status').textContent = 'Sin detecci&oacute;n';
+        document.getElementById('cam-status').textContent = 'No se pudo leer la patente';
       }
     }
   } catch (e) {
-    console.warn('OCR error:', e);
-    document.getElementById('cam-status').textContent = 'Error de lectura';
+    console.warn('Detection error:', e);
+    document.getElementById('cam-status').textContent = 'Error de detecci&oacute;n';
   }
 }
 
