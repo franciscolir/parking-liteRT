@@ -30,24 +30,39 @@ function navigate(view) {
   const nEl = document.querySelector(`.nav-item[data-view="${view}"]`);
   if (nEl) nEl.classList.add('active');
   if (view !== 'camera') stopCamera();
-  if (view === 'camera') { updateHistory(); loadModel(); }
+  if (view === 'camera') { updateHistory(); loadDetector(); }
   if (view === 'home') updateStats();
   if (view === 'call') renderContacts();
 }
 
-// =============================== IA MODEL (lazy) ===============================
-let cocoModel = null;
-let modelLoading = false;
+// =============================== LITERT / MEDIAPIPE DETECTOR ===============================
+let detector = null;
+let detectorLoading = false;
 
-async function loadModel() {
-  if (cocoModel || modelLoading) return;
-  modelLoading = true;
+async function loadDetector() {
+  if (detector || detectorLoading) return;
+  detectorLoading = true;
+  document.getElementById('cam-status').textContent = 'Cargando liteRT...';
   try {
-    cocoModel = await cocoSsd.load();
+    const { FilesetResolver, ObjectDetector } = await import(
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/vision_bundle.js'
+    );
+    const vision = await FilesetResolver.forVisionTasks(
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm/'
+    );
+    detector = await ObjectDetector.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/latest/efficientdet_lite0.tflite',
+      },
+      scoreThreshold: 0.4,
+      maxResults: 5,
+    });
+    document.getElementById('cam-status').textContent = 'liteRT listo';
   } catch (e) {
-    console.warn('COCO-SSD no disponible, solo OCR directo');
+    console.warn('liteRT no disponible, solo OCR directo:', e);
+    document.getElementById('cam-status').textContent = 'liteRT no disponible';
   }
-  modelLoading = false;
+  detectorLoading = false;
 }
 
 // =============================== PLATE PATTERNS ===============================
@@ -348,22 +363,27 @@ async function captureAndDetect() {
     } catch (e) { /* skip */ }
   }
 
-  // === Vehicle detection fallback ===
-  if (!plate && cocoModel) {
+  // === Vehicle detection via liteRT / MediaPipe ===
+  if (!plate && detector) {
     try {
       document.getElementById('cam-status').textContent = 'Buscando vehiculo...';
-      const predictions = await cocoModel.detect(video);
-      const vehicles = predictions
-        .filter(p => ['car', 'truck', 'bus', 'motorcycle'].includes(p.class) && p.score > 0.35)
-        .sort((a, b) => b.score - a.score);
+      const results = detector.detect(video);
+      if (results && results.detections) {
+        const vehicles = results.detections
+          .filter(d => {
+            const cat = d.categories[0];
+            return cat && ['car', 'truck', 'bus', 'motorcycle'].includes(cat.categoryName) && cat.score > 0.35;
+          });
 
-      if (vehicles.length > 0) {
-        const b = vehicles[0];
-        const [bx, by, bw, bh] = b.bbox;
-        const pc = cropCanvas(frame, bx + bw * 0.12, by + bh * 0.5, bw * 0.76, bh * 0.35);
-        plate = await readPlate(pc, debug);
+        if (vehicles.length > 0) {
+          const best = vehicles[0];
+          const bb = best.boundingBox;
+          const bx = bb.originX, by = bb.originY, bw = bb.width, bh = bb.height;
+          const pc = cropCanvas(frame, bx + bw * 0.12, by + bh * 0.5, bw * 0.76, bh * 0.35);
+          plate = await readPlate(pc, debug);
+        }
       }
-    } catch (e) { console.warn('Vehicle detection error:', e); }
+    } catch (e) { console.warn('liteRT detection error:', e); }
   }
 
   if (plate) {
@@ -514,4 +534,8 @@ document.addEventListener('DOMContentLoaded', function () {
   updateStats();
   updateHistory();
   renderContacts();
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 });
