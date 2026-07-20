@@ -1,11 +1,12 @@
-const CACHE = 'platedetect-v2';
+const CACHE = 'platedetect-v3';
+const BASE = (self.location.pathname.replace(/\/sw\.js$/, '') || '/') + '/';
 const ASSETS = [
-  '/parking-liteRT/',
-  '/parking-liteRT/index.html',
-  '/parking-liteRT/style.css',
-  '/parking-liteRT/app.js',
-  '/parking-liteRT/ocr-worker.js',
-  '/parking-liteRT/manifest.json',
+  BASE,
+  BASE + 'index.html',
+  BASE + 'style.css',
+  BASE + 'app.js',
+  BASE + 'ocr-worker.js',
+  BASE + 'manifest.json',
 ];
 
 self.addEventListener('install', e => {

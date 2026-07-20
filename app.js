@@ -260,6 +260,8 @@ function readPlateInWorker(canvas) {
   });
 }
 
+function tick() { return new Promise(r => setTimeout(r, 0)); }
+
 // Fallback: OCR sincrono en main thread
 function readPlateSync(canvas) {
   if (canvas.width < 40 || canvas.height < 20) return null;
@@ -431,13 +433,14 @@ function processPlate(plate) {
   else { st = '\u26A0 No registrado'; css = 'warning'; ico = '\u26A0'; scanCount.unknown++; }
   scanCount.total++;
 
-  save('plateStats', scanCount); save('plateHistory', scanHistory);
+  scanHistory.unshift({ plate, status: css, time: Date.now() });
+  if (scanHistory.length > 20) scanHistory.pop();
+  save('plateStats', scanCount);
+  save('plateHistory', scanHistory);
   updateStats();
   result.className = 'camera-result ' + css;
   document.getElementById('result-icon').textContent = ico;
   document.getElementById('result-status').textContent = st;
-  scanHistory.unshift({ plate, status: css, time: Date.now() });
-  if (scanHistory.length > 20) scanHistory.pop();
   updateHistory();
   if (navigator.vibrate) navigator.vibrate(100);
   document.getElementById('reg-plate').value = plate;

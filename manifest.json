@@ -2,7 +2,7 @@
   "name": "PlateDetect",
   "short_name": "PlateDetect",
   "description": "Lector de patentes en vivo con deteccion de vehiculos registrados y denunciados",
-  "start_url": "/parking-liteRT/",
+  "start_url": ".",
   "display": "standalone",
   "background_color": "#0b1121",
   "theme_color": "#3b82f6",
