@@ -60,18 +60,6 @@ function tensorFromFrame(frame) {
   return new Tensor(data, [1, INPUT_SIZE, INPUT_SIZE, 3]);
 }
 
-function classifyTensor(detail) {
-  const n = detail.name.toLowerCase();
-  const s = detail.shape;
-  const flat = s.reduce((a, b) => a * b, 1);
-  if (n.includes('box') || (s.length >= 2 && s[s.length - 1] === 4)) return 'boxes';
-  if (n.includes('score') || n.includes('conf')) return 'scores';
-  if (n.includes('class') || n.includes('category')) return 'classes';
-  if (n.includes('num') || flat <= 4) return 'num';
-  if (flat > 100 && flat < 2000 && flat % 4 === 0) return 'boxes';
-  return 'other';
-}
-
 async function detectVehicles(video) {
   if (!liteModel || !litertReady) return [];
   const inputTensor = tensorFromFrame(video);
@@ -79,32 +67,51 @@ async function detectVehicles(video) {
   inputTensor.delete();
 
   const details = liteModel.getOutputDetails();
-  const grouped = {};
-  for (let i = 0; i < details.length; i++) {
-    const type = classifyTensor(details[i]);
-    if (!grouped[type]) grouped[type] = { tensor: outputs[i], detail: details[i] };
-  }
-  if (!grouped.boxes) { outputs.forEach(o => o.delete()); return []; }
+  const out0 = outputs[0], out1 = outputs[1];
+  if (!out0 || !out1) { outputs.forEach(o => o?.delete()); return []; }
 
-  const boxData = await grouped.boxes.tensor.toTypedArray();
-  const scoreData = grouped.scores ? await grouped.scores.tensor.toTypedArray() : [];
-  const classData = grouped.classes ? await grouped.classes.tensor.toTypedArray() : [];
+  const s0 = details[0].shape, s1 = details[1].shape;
+  const boxData = await out0.toTypedArray();
+  const scoreData = await out1.toTypedArray();
   outputs.forEach(o => o.delete());
 
-  const num = grouped.boxes.detail.shape.length === 3 ? grouped.boxes.detail.shape[1] : Math.floor(boxData.length / 4);
+  const numAnchors = s0[1];
+  const numClasses = s1[2];
   const fw = video.videoWidth, fh = video.videoHeight;
-  const result = [];
+  const candidates = [];
 
-  for (let i = 0; i < num; i++) {
-    const score = scoreData[i] || 0;
-    if (score < 0.35) continue;
-    const cls = Math.round(classData[i] || 0);
-    if (!VEHICLE_LABELS[cls] || VEHICLE_LABELS.indexOf(VEHICLE_LABELS[cls]) === -1) continue;
-    const ymin = boxData[i * 4], xmin = boxData[i * 4 + 1], ymax = boxData[i * 4 + 2], xmax = boxData[i * 4 + 3];
-    result.push({ x: xmin * fw, y: ymin * fh, w: (xmax - xmin) * fw, h: (ymax - ymin) * fh, score });
+  for (let a = 0; a < numAnchors; a++) {
+    let bestScore = 0, bestCls = -1;
+    for (let c = 0; c < numClasses; c++) {
+      const sc = scoreData[a * numClasses + c];
+      if (sc > bestScore) { bestScore = sc; bestCls = c; }
+    }
+    if (bestScore < 0.35 || bestCls < 0 || bestCls >= VEHICLE_LABELS.length) continue;
+    if (!VEHICLE_LABELS.some(l => l === VEHICLE_LABELS[bestCls])) continue;
+
+    const ymin = boxData[a * 4], xmin = boxData[a * 4 + 1];
+    const ymax = boxData[a * 4 + 2], xmax = boxData[a * 4 + 3];
+    candidates.push({
+      x: xmin * fw, y: ymin * fh, w: (xmax - xmin) * fw, h: (ymax - ymin) * fh,
+      score: bestScore,
+    });
   }
 
-  return result;
+  // NMS
+  candidates.sort((a, b) => b.score - a.score);
+  const keep = [];
+  for (const c of candidates) {
+    let overlap = false;
+    for (const k of keep) {
+      const ix1 = Math.max(c.x, k.x), iy1 = Math.max(c.y, k.y);
+      const ix2 = Math.min(c.x + c.w, k.x + k.w), iy2 = Math.min(c.y + c.h, k.y + k.h);
+      const inter = Math.max(0, ix2 - ix1) * Math.max(0, iy2 - iy1);
+      const union = c.w * c.h + k.w * k.h - inter;
+      if (inter / union > 0.5) { overlap = true; break; }
+    }
+    if (!overlap) keep.push(c);
+  }
+  return keep;
 }
 
 // =============================== PLATE OCR (canvas-based, no Tesseract) ===============================
@@ -473,13 +480,6 @@ document.addEventListener('DOMContentLoaded', function () {
   };
   updateStats(); updateHistory(); renderContacts(); initLiteRT();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').then(reg => {
-      reg.addEventListener('updatefound', () => {
-        reg.installing.addEventListener('statechange', function swCb() {
-          if (this.state === 'installed' && navigator.serviceWorker.controller) { showToast('Nueva version disponible. Recarga.', 'success'); }
-        });
-      });
-    }).catch(() => {});
-    navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload());
+    navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 });
