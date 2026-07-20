@@ -1,6 +1,6 @@
 // =============================== DATABASE ===============================
 const DB = {
-  registered: ['ABC123', 'DEF456', 'GHI789', 'JKL012', 'MNO345', 'PQR678', 'STU901'],
+  registered: ['ABC123', 'DEF456', 'GHI789', 'JKL012', 'MNO345', 'PQR678', 'STU901', 'BBBB10'],
   stolen: ['XYZ789', 'LMN456', 'WVU321'],
 };
 

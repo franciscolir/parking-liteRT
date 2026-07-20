@@ -17,7 +17,7 @@
   <div class="home-hero">
     <div class="logo">&#128674;</div>
     <h2>PlateDetect</h2>
-    <p>Lectura de patentes en vivo con detecci&oacute;n de veh&iacute;culos registrados y denunciados.</p>
+    <p>Lectura de patentes en vivo con deteccion de vehiculos registrados y denunciados.</p>
   </div>
   <div class="stats-grid">
     <div class="stat-card"><div class="num" id="stat-total">0</div><div class="label">Escaneos</div></div>
@@ -68,14 +68,14 @@
     <label class="switch-container">
       <input type="checkbox" id="scan-toggle" onchange="toggleScan()">
       <span class="switch-slider"></span>
-      <span class="switch-label" id="switch-label">Iniciar detecci&oacute;n</span>
+      <span class="switch-label" id="switch-label">Iniciar deteccion</span>
     </label>
   </div>
   <div class="camera-result hidden" id="cam-result">
     <div class="result-card-inner">
       <div class="plate-icon" id="result-icon">&#128663;</div>
       <div class="plate-number" id="result-plate">---</div>
-      <div class="plate-status" id="result-status">Esperando detecci&oacute;n...</div>
+      <div class="plate-status" id="result-status">Esperando deteccion...</div>
     </div>
   </div>
   <div class="camera-history" id="cam-history">
@@ -94,13 +94,13 @@
       <input type="text" id="reg-plate" placeholder="Ej: ABC123" maxlength="10" class="input-plate">
     </div>
     <div class="form-group">
-      <label>Tipo de veh&iacute;culo</label>
+      <label>Tipo de vehiculo</label>
       <select id="reg-vehicle">
         <option value="">Seleccionar...</option>
         <option>Auto</option>
         <option>Camioneta</option>
         <option>Moto</option>
-        <option>Cami&oacute;n</option>
+        <option>Camion</option>
         <option>Utilitario</option>
         <option>Otro</option>
       </select>
@@ -118,11 +118,11 @@
       </select>
     </div>
     <div class="form-group">
-      <label>Ubicaci&oacute;n (opcional)</label>
+      <label>Ubicacion (opcional)</label>
       <input type="text" id="reg-location" placeholder="Calle y n&uacute;mero, referencia">
     </div>
     <div class="form-group">
-      <label>Descripci&oacute;n adicional</label>
+      <label>Descripcion adicional</label>
       <textarea id="reg-desc" placeholder="Color, detalles, hora aproximada..."></textarea>
     </div>
     <button class="btn-whatsapp" onclick="sendWhatsApp()">
@@ -135,13 +135,13 @@
 
 <!-- =============== VIEW: CALL =============== -->
 <div id="view-call" class="view">
-  <div class="view-header"><h1>Marcaci&oacute;n R&aacute;pida</h1></div>
+  <div class="view-header"><h1>Marcacion R&aacute;pida</h1></div>
   <div class="contact-grid" id="contact-grid"></div>
   <div class="card">
     <div class="card-title">Agregar contacto</div>
     <div class="form-group">
       <label>Nombre</label>
-      <input type="text" id="new-contact-name" placeholder="Ej: Comisar&iacute;a">
+      <input type="text" id="new-contact-name" placeholder="Ej: Comisaria">
     </div>
     <div class="form-group">
       <label>Tel&eacute;fono</label>
