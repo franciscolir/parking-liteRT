@@ -9,7 +9,7 @@ let scanCount = JSON.parse(localStorage.getItem('plateStats') || '{"total":0,"re
 let contacts = JSON.parse(localStorage.getItem('contacts') || '[]');
 
 const defaultContacts = [
-  { name: 'Polic&iacute;a', phone: '911', type: 'police', icon: '&#128110;' },
+  { name: 'Policia', phone: '911', type: 'police', icon: '&#128110;' },
   { name: 'Emergencias', phone: '107', type: 'emergency', icon: '&#128657;' },
   { name: 'Bomberos', phone: '100', type: 'fire', icon: '&#128293;' },
   { name: 'Hospital', phone: '108', type: 'hospital', icon: '&#127973;' },
@@ -67,11 +67,13 @@ let scanTimer = null;
 let ocrWorker = null;
 
 const PLATE_PATTERNS = [
-  /^[A-Z]{3}\d{3}$/,          // ABC 123
-  /^[A-Z]{2}\d{3}[A-Z]{2}$/,  // AB 123 CD (Mercosur)
-  /^\d{3}[A-Z]{3}$/,          // 123 ABC
-  /^[A-Z]\d{3}[A-Z]{3}$/,     // A 123 BCD
-  /^\d{3}[A-Z]{2}\d{2}$/,     // 123 AB 45
+  /^[A-Z]{4}\d{2}$/,          // ABCD 12
+  /^[A-Z]{2}\d{4}$/,          // AB 1234
+  ///^[A-Z]{3}\d{3}$/,          // ABC 123
+ // /^[A-Z]{2}\d{3}[A-Z]{2}$/,  // AB 123 CD (Mercosur)
+  // /^\d{3}[A-Z]{3}$/,          // 123 ABC
+  // /^[A-Z]\d{3}[A-Z]{3}$/,     // A 123 BCD
+  ///^\d{3}[A-Z]{2}\d{2}$/,     // 123 AB 45
 ];
 
 const OCR_CORRECTIONS = {
@@ -233,7 +235,7 @@ function stopCamera() {
   const toggle = document.getElementById('scan-toggle');
   if (toggle) toggle.checked = false;
   const label = document.getElementById('switch-label');
-  if (label) label.textContent = 'Iniciar detecci\u00F3n';
+  if (label) label.textContent = 'Iniciar deteccion';
   setBadgeScanning(false);
   if (mediaStream) {
     mediaStream.getTracks().forEach(t => t.stop());
@@ -250,7 +252,7 @@ async function toggleScan() {
     isScanning = false;
     if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
     toggle.checked = false;
-    label.textContent = 'Iniciar detecci\u00F3n';
+    label.textContent = 'Iniciar deteccion';
     setBadgeScanning(false);
     if (mediaStream) {
       mediaStream.getTracks().forEach(t => t.stop());
@@ -269,7 +271,7 @@ async function toggleScan() {
   if (!modelOk) { toggle.checked = false; showToast('Error al cargar IA', 'error'); return; }
 
   isScanning = true;
-  label.textContent = 'Apagar c\u00E1mara';
+  label.textContent = 'Apagar camara';
   setBadgeScanning(true);
   document.getElementById('cam-status').textContent = 'Escaneando...';
 
@@ -356,7 +358,7 @@ async function captureAndDetect() {
 
   for (const r of regions) {
     if (plate) break;
-    document.getElementById('cam-status').textContent = 'Buscando patente...';
+    document.getElementById('cam-status').textContent = 'Buscando...';
     try {
       const crop = cropCanvas(frame, r.x, r.y, r.w, r.h);
       plate = await readPlate(crop);
@@ -365,7 +367,7 @@ async function captureAndDetect() {
 
   if (!plate && cocoModel) {
     try {
-      document.getElementById('cam-status').textContent = 'Buscando veh\u00EDculo...';
+      document.getElementById('cam-status').textContent = 'Buscando...';
       const predictions = await cocoModel.detect(video);
       const vehicles = predictions
         .filter(p => ['car', 'truck', 'bus', 'motorcycle'].includes(p.class) && p.score > 0.35)
@@ -385,7 +387,7 @@ async function captureAndDetect() {
   if (plate) {
     processPlate(plate);
   } else {
-    document.getElementById('cam-status').textContent = 'Sin detecci\u00F3n';
+    document.getElementById('cam-status').textContent = 'Sin deteccion';
   }
 }
 
@@ -403,12 +405,12 @@ function processPlate(plate) {
   let status, cssClass, ico;
 
   if (DB.stolen.includes(plate)) {
-    status = '&#9888; VEH&Iacute;CULO DENUNCIADO - Tomar precauciones';
+    status = '&#9888; VEHICULO DENUNCIADO - Tomar precauciones';
     cssClass = 'danger';
     ico = '&#9888;';
     scanCount.stolen++;
   } else if (DB.registered.includes(plate)) {
-    status = '&#10003; Veh&iacute;culo registrado - Sin novedades';
+    status = '&#10003; Vehiculo registrado - Sin novedades';
     cssClass = 'success';
     ico = '&#10003;';
     scanCount.registered++;
@@ -477,14 +479,14 @@ function sendWhatsApp() {
   const desc = document.getElementById('reg-desc').value.trim();
 
   if (!plate) { showToast('Ingrese una patente', 'error'); return; }
-  if (!vehicle) { showToast('Seleccione tipo de veh&iacute;culo', 'error'); return; }
+  if (!vehicle) { showToast('Seleccione tipo de vehiculo', 'error'); return; }
   if (!incident) { showToast('Seleccione tipo de incidente', 'error'); return; }
 
   const msg = [
     '\u{1F6A8} *REPORTE DE INCIDENTE*',
     '',
     '\u{1F539} *Patente:* ' + plate.toUpperCase(),
-    '\u{1F539} *Veh&iacute;culo:* ' + vehicle,
+    '\u{1F539} *Vehiculo:* ' + vehicle,
     '\u{1F539} *Incidente:* ' + incident,
     location ? '\u{1F539} *Ubicaci&oacute;n:* ' + location : '',
     desc ? '\u{1F539} *Descripci&oacute;n:* ' + desc : '',
