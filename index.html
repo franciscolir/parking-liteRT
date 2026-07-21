@@ -57,8 +57,16 @@
   <div class="camera-container" id="cam-container">
     <video id="video" autoplay playsinline muted></video>
     <div class="overlay">
-      <div class="scan-frame"></div>
+      <div class="scan-frame" id="scan-frame"></div>
       <div class="scan-line"></div>
+      <div class="cam-hud">
+        <span class="hud-fps" id="hud-fps">FPS 0</span>
+        <span class="hud-gpu" id="hud-gpu">CPU</span>
+      </div>
+      <div class="cam-overlay-result hidden" id="overlay-result">
+        <div class="overlay-plate" id="overlay-plate">---</div>
+        <div class="overlay-status" id="overlay-status">Esperando...</div>
+      </div>
     </div>
   </div>
   <div class="camera-controls">

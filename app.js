@@ -24,20 +24,118 @@ let mediaStream = null, isScanning = false, scanTimer = null;
 let liteModel = null, litertReady = false, INPUT_SIZE = 320;
 let ocrWorker = null;
 
+// =============================== SLIDING WINDOW (voto mayoritario) ===============================
+const plateWindow = [];
+const WINDOW_SIZE = 5;
+
+function addToWindow(plate) {
+  plateWindow.push(plate);
+  if (plateWindow.length > WINDOW_SIZE) plateWindow.shift();
+}
+
+function getConsensus() {
+  if (plateWindow.length < 3) return null;
+  const counts = {};
+  for (const p of plateWindow) counts[p] = (counts[p] || 0) + 1;
+  let best = null, max = 0;
+  for (const [p, c] of Object.entries(counts)) { if (c > max) { max = c; best = p; } }
+  return max >= 3 ? best : null;
+}
+
+// =============================== FPS COUNTER ===============================
+let fpsFrames = 0, fpsLastTime = performance.now();
+function updateFPS() {
+  fpsFrames++;
+  const now = performance.now();
+  if (now - fpsLastTime >= 1000) {
+    const fps = Math.round(fpsFrames * 1000 / (now - fpsLastTime));
+    const el = document.getElementById('hud-fps');
+    if (el) el.textContent = 'FPS ' + fps;
+    fpsFrames = 0;
+    fpsLastTime = now;
+  }
+}
+
+// =============================== NORMALIZACION OCR ===============================
+function normalizeOCR(text) {
+  let t = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const map = { 'O': '0', 'I': '1', 'Z': '2', 'S': '5', 'B': '8' };
+  // Aplicar solo en posiciones donde se espera un digito
+  // Formato Chile: ABCD12 (4 letras + 2 digitos) o AB1234 (2 letras + 4 digitos)
+  if (PLATE_PATTERNS[0].test(t)) {
+    // ABCD12: posiciones 4 y 5 son digitos
+    t = t.slice(0, 4) + t[4].replace(/[OISZB]/g, c => map[c] || c) + t[5].replace(/[OISZB]/g, c => map[c] || c);
+  } else if (PLATE_PATTERNS[1].test(t)) {
+    // AB1234: posiciones 2-5 son digitos
+    t = t.slice(0, 2) + t.slice(2).replace(/[OISZB]/g, c => map[c] || c);
+  }
+  return t;
+}
+
+// =============================== INDEXEDDB ===============================
+const DB_NAME = 'platedetect';
+const DB_VERSION = 1;
+let idb = null;
+
+function initDB() {
+  return new Promise((resolve) => {
+    if (!indexedDB) { resolve(null); return; }
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onsuccess = () => { idb = req.result; resolve(idb); };
+    req.onerror = () => resolve(null);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('plates')) db.createObjectStore('plates', { keyPath: 'plate' });
+      if (!db.objectStoreNames.contains('history')) db.createObjectStore('history', { keyPath: 'id', autoIncrement: true });
+    };
+  });
+}
+
+function saveIDB(store, value) {
+  if (!idb) return Promise.resolve();
+  return new Promise(resolve => {
+    const tx = idb.transaction(store, 'readwrite');
+    tx.objectStore(store).put(value);
+    tx.oncomplete = resolve;
+    tx.onerror = resolve;
+  });
+}
+
+function getAllIDB(store) {
+  if (!idb) return Promise.resolve([]);
+  return new Promise(resolve => {
+    const tx = idb.transaction(store, 'readonly');
+    const req = tx.objectStore(store).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => resolve([]);
+  });
+}
+
 // =============================== PERSISTENCE ===============================
 function save(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
 
 // =============================== LITERT.JS - INIT ===============================
 let liteLoading = false;
+let useGPU = false;
+
+function detectGPU() {
+  useGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
+  const hud = document.getElementById('hud-gpu');
+  if (hud) hud.textContent = useGPU ? 'GPU' : 'CPU';
+  return useGPU;
+}
+
 async function initLiteRT() {
   if (liteModel || litertReady || liteLoading) return;
   liteLoading = true;
   setStatus('Cargando liteRT.js...');
+  detectGPU();
   try {
     await loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core/wasm/', { jspi: true });
+    const accelerator = useGPU ? 'webgpu' : 'wasm';
     liteModel = await loadAndCompile(
       'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/latest/efficientdet_lite0.tflite',
-      { accelerator: 'wasm' }
+      { accelerator }
     );
     INPUT_SIZE = liteModel.getInputDetails()[0]?.shape[1] || 320;
     console.log('liteRT outputs:', liteModel.getOutputDetails().map(d => d.name + ' ' + JSON.stringify(d.shape)));
@@ -377,6 +475,7 @@ function crop(src, x, y, w, h) {
 async function detect() {
   const video = document.getElementById('video');
   if (!video || !video.videoWidth) return;
+  updateFPS();
   const frame = captureFrame();
   if (!frame) return;
 
@@ -398,6 +497,7 @@ async function detect() {
   }
 
   // Vehicle detection via LiteRT.js
+  let detectedBox = null;
   if (!plate && litertReady) {
     try {
       setStatus('liteRT.js detectando...');
@@ -407,18 +507,73 @@ async function detect() {
         if (plate) break;
         setStatus('Leyendo patente...');
         await tick();
+        detectedBox = v;
         plate = await readPlateInWorker(crop(frame, v.x + v.w * 0.12, v.y + v.h * 0.5, v.w * 0.76, v.h * 0.35));
       }
     } catch (e) { console.warn('liteRT error:', e); }
   }
 
+  if (detectedBox) drawDetectionBox(detectedBox);
+
   if (plate) {
-    const corrected = correctPlate(plate);
-    if (corrected) processPlate(corrected);
-    else setStatus('Patente invalida: ' + plate);
+    const normalized = normalizeOCR(plate);
+    const corrected = correctPlate(normalized);
+    if (corrected) {
+      addToWindow(corrected);
+      const consensus = getConsensus();
+      if (consensus) {
+        processPlate(consensus);
+        plateWindow.length = 0;
+      } else {
+        showOverlay(corrected, 'warning', 'Confirmando...');
+      }
+    } else {
+      setStatus('Patente invalida: ' + plate);
+      plateWindow.length = 0;
+    }
   } else {
     setStatus('Sin deteccion');
+    hideOverlay();
   }
+}
+
+function drawDetectionBox(v) {
+  const sf = document.getElementById('scan-frame');
+  if (!sf) return;
+  const video = document.getElementById('video');
+  if (!video.videoWidth) return;
+  const vw = video.clientWidth, vh = video.clientHeight;
+  const scaleX = vw / video.videoWidth, scaleY = vh / video.videoHeight;
+  sf.style.left = (v.x * scaleX) + 'px';
+  sf.style.top = (v.y * scaleY) + 'px';
+  sf.style.width = (v.w * scaleX) + 'px';
+  sf.style.height = (v.h * scaleY) + 'px';
+  sf.style.transform = 'none';
+  sf.classList.add('active');
+  setTimeout(() => sf.classList.remove('active'), 300);
+  // Reset to center after a bit
+  setTimeout(() => {
+    sf.style.left = '';
+    sf.style.top = '';
+    sf.style.width = '';
+    sf.style.height = '';
+    sf.style.transform = '';
+  }, 1000);
+}
+
+function showOverlay(plate, type, statusText) {
+  const el = document.getElementById('overlay-result');
+  if (!el) return;
+  el.classList.remove('hidden');
+  document.getElementById('overlay-plate').textContent = plate;
+  const stEl = document.getElementById('overlay-status');
+  stEl.className = 'overlay-status ' + type;
+  stEl.textContent = statusText;
+}
+
+function hideOverlay() {
+  const el = document.getElementById('overlay-result');
+  if (el) el.classList.add('hidden');
 }
 
 function processPlate(plate) {
@@ -428,19 +583,21 @@ function processPlate(plate) {
   document.getElementById('result-plate').textContent = plate;
 
   let st, css, ico;
-  if (DB.stolen.includes(plate)) { st = '\u26A0 VEHICULO DENUNCIADO'; css = 'danger'; ico = '\u26A0'; scanCount.stolen++; }
-  else if (DB.registered.includes(plate)) { st = '\u2713 Vehiculo registrado'; css = 'success'; ico = '\u2713'; scanCount.registered++; }
-  else { st = '\u26A0 No registrado'; css = 'warning'; ico = '\u26A0'; scanCount.unknown++; }
+  if (DB.stolen.includes(plate)) { st = '\u26A0 VEHICULO DENUNCIADO'; css = 'danger'; ico = '\u{1F534}'; scanCount.stolen++; }
+  else if (DB.registered.includes(plate)) { st = '\u2713 Vehiculo registrado'; css = 'success'; ico = '\u{1F7E2}'; scanCount.registered++; }
+  else { st = '\u26A0 No registrado'; css = 'warning'; ico = '\u{1F534}'; scanCount.unknown++; }
   scanCount.total++;
 
   scanHistory.unshift({ plate, status: css, time: Date.now() });
   if (scanHistory.length > 20) scanHistory.pop();
   save('plateStats', scanCount);
   save('plateHistory', scanHistory);
+  saveIDB('history', { plate, status: css, time: Date.now() });
   updateStats();
   result.className = 'camera-result ' + css;
   document.getElementById('result-icon').textContent = ico;
   document.getElementById('result-status').textContent = st;
+  showOverlay(plate, css, st.replace(/[\u26A0\u2713]/g, '').trim());
   updateHistory();
   if (navigator.vibrate) navigator.vibrate(100);
   document.getElementById('reg-plate').value = plate;
@@ -530,7 +687,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const txt = document.getElementById('result-plate').textContent;
     if (txt !== '---') { document.getElementById('reg-plate').value = txt; window.navigate('register'); }
   };
-  updateStats(); updateHistory(); renderContacts(); initLiteRT(); initWorker();
+  updateStats(); updateHistory(); renderContacts(); initLiteRT(); initWorker(); initDB();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }

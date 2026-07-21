@@ -300,6 +300,60 @@ html, body {
   pointer-events: none;
 }
 
+.cam-hud {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 5;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .55);
+  backdrop-filter: blur(4px);
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: #00ff88;
+  letter-spacing: .5px;
+}
+.hud-gpu { color: #4ecdc4; }
+
+.cam-overlay-result {
+  position: absolute;
+  bottom: 8%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  padding: 10px 24px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, .7);
+  backdrop-filter: blur(8px);
+  text-align: center;
+  min-width: 180px;
+  transition: opacity .2s, transform .2s;
+}
+.cam-overlay-result.hidden { opacity: 0; transform: translateX(-50%) translateY(8px); pointer-events: none; }
+
+.overlay-plate {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: #fff;
+  text-shadow: 0 2px 8px rgba(0,0,0,.5);
+}
+.overlay-status {
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.overlay-status.success { color: var(--success); }
+.overlay-status.danger { color: var(--danger); }
+.overlay-status.warning { color: var(--warning); }
+
 .scan-frame {
   position: absolute;
   top: 50%;
@@ -307,10 +361,12 @@ html, body {
   transform: translate(-50%, -50%);
   width: 75%;
   height: 35%;
-  border: 2px solid var(--primary);
+  border: 2px solid #22c55e;
   border-radius: 8px;
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, .45);
+  transition: border-color .15s;
 }
+.scan-frame.active { border-color: #ffeb3b; box-shadow: 0 0 16px rgba(255, 235, 59, .5), 0 0 0 9999px rgba(0, 0, 0, .45); }
 
 .scan-frame::before {
   content: '';
