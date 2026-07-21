@@ -7,7 +7,7 @@ const DB = {
   stolen: ['XYZ789', 'LMN456', 'WVU321'],
 };
 const PLATE_PATTERNS = [/^[A-Z]{4}\d{2}$/, /^[A-Z]{2}\d{4}$/];
-const VEHICLE_CLASS_IDS = new Set([3, 4, 6, 8]); // COCO: 3=car, 4=motorcycle, 6=bus, 8=truck
+const VEHICLE_CLASS_IDS = new Set([3, 4, 6, 8]);
 const DEFAULT_CONTACTS = [
   { name: 'Policia', phone: '911', type: 'police', icon: '\u{1F6A8}' },
   { name: 'Emergencias', phone: '107', type: 'emergency', icon: '\u{1F691}' },
@@ -24,7 +24,7 @@ let mediaStream = null, isScanning = false, scanTimer = null;
 let liteModel = null, litertReady = false, INPUT_SIZE = 320;
 let ocrWorker = null;
 
-// =============================== SLIDING WINDOW (voto mayoritario) ===============================
+// =============================== SLIDING WINDOW ===============================
 const plateWindow = [];
 const WINDOW_SIZE = 5;
 
@@ -59,70 +59,44 @@ function updateFPS() {
 // =============================== NORMALIZACION OCR ===============================
 function normalizeOCR(text) {
   let t = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const map = { 'O': '0', 'I': '1', 'Z': '2', 'S': '5', 'B': '8' };
-  // Aplicar solo en posiciones donde se espera un digito
-  // Formato Chile: ABCD12 (4 letras + 2 digitos) o AB1234 (2 letras + 4 digitos)
+  const map = { O: '0', I: '1', Z: '2', S: '5', B: '8' };
   if (PLATE_PATTERNS[0].test(t)) {
-    // ABCD12: posiciones 4 y 5 son digitos
-    t = t.slice(0, 4) + t[4].replace(/[OISZB]/g, c => map[c] || c) + t[5].replace(/[OISZB]/g, c => map[c] || c);
+    t = t.slice(0, 4) + (map[t[4]] || t[4]) + (map[t[5]] || t[5]);
   } else if (PLATE_PATTERNS[1].test(t)) {
-    // AB1234: posiciones 2-5 son digitos
     t = t.slice(0, 2) + t.slice(2).replace(/[OISZB]/g, c => map[c] || c);
   }
   return t;
 }
 
 // =============================== INDEXEDDB ===============================
-const DB_NAME = 'platedetect';
-const DB_VERSION = 1;
 let idb = null;
 
 function initDB() {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     if (!indexedDB) { resolve(null); return; }
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const req = indexedDB.open('platedetect', 1);
     req.onsuccess = () => { idb = req.result; resolve(idb); };
     req.onerror = () => resolve(null);
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains('plates')) db.createObjectStore('plates', { keyPath: 'plate' });
       if (!db.objectStoreNames.contains('history')) db.createObjectStore('history', { keyPath: 'id', autoIncrement: true });
     };
   });
 }
 
-function saveIDB(store, value) {
-  if (!idb) return Promise.resolve();
-  return new Promise(resolve => {
-    const tx = idb.transaction(store, 'readwrite');
-    tx.objectStore(store).put(value);
-    tx.oncomplete = resolve;
-    tx.onerror = resolve;
-  });
+function saveIDB(value) {
+  if (!idb) return;
+  const tx = idb.transaction('history', 'readwrite');
+  tx.objectStore('history').put(value);
 }
 
-function getAllIDB(store) {
-  if (!idb) return Promise.resolve([]);
-  return new Promise(resolve => {
-    const tx = idb.transaction(store, 'readonly');
-    const req = tx.objectStore(store).getAll();
-    req.onsuccess = () => resolve(req.result || []);
-    req.onerror = () => resolve([]);
-  });
-}
-
-// =============================== PERSISTENCE ===============================
-function save(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
-
-// =============================== LITERT.JS - INIT ===============================
-let liteLoading = false;
-let useGPU = false;
+// =============================== LITERT.JS ===============================
+let liteLoading = false, useGPU = false;
 
 function detectGPU() {
-  useGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
+  useGPU = !!navigator.gpu;
   const hud = document.getElementById('hud-gpu');
   if (hud) hud.textContent = useGPU ? 'GPU' : 'CPU';
-  return useGPU;
 }
 
 async function initLiteRT() {
@@ -132,10 +106,9 @@ async function initLiteRT() {
   detectGPU();
   try {
     await loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core/wasm/', { jspi: true });
-    const accelerator = useGPU ? 'webgpu' : 'wasm';
     liteModel = await loadAndCompile(
       'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/latest/efficientdet_lite0.tflite',
-      { accelerator }
+      { accelerator: useGPU ? 'webgpu' : 'wasm' }
     );
     INPUT_SIZE = liteModel.getInputDetails()[0]?.shape[1] || 320;
     console.log('liteRT outputs:', liteModel.getOutputDetails().map(d => d.name + ' ' + JSON.stringify(d.shape)));
@@ -147,7 +120,6 @@ async function initLiteRT() {
   }
 }
 
-// =============================== LITERT.JS - INFERENCE ===============================
 function tensorFromFrame(frame) {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = INPUT_SIZE;
@@ -170,16 +142,14 @@ async function detectVehicles(video) {
   inputTensor.delete();
 
   const details = liteModel.getOutputDetails();
-  const out0 = outputs[0], out1 = outputs[1];
-  if (!out0 || !out1) { outputs.forEach(o => o?.delete()); return []; }
+  if (!outputs[0] || !outputs[1]) { outputs.forEach(o => o?.delete()); return []; }
 
-  const s0 = details[0].shape, s1 = details[1].shape;
-  const boxData = await out0.toTypedArray();
-  const scoreData = await out1.toTypedArray();
+  const boxData = await outputs[0].toTypedArray();
+  const scoreData = await outputs[1].toTypedArray();
   outputs.forEach(o => o.delete());
 
-  const numAnchors = s0[1];
-  const numClasses = s1[2];
+  const numAnchors = details[0].shape[1];
+  const numClasses = details[1].shape[2];
   const fw = video.videoWidth, fh = video.videoHeight;
   const candidates = [];
 
@@ -190,16 +160,13 @@ async function detectVehicles(video) {
       if (sc > bestScore) { bestScore = sc; bestCls = c; }
     }
     if (bestScore < 0.35 || !VEHICLE_CLASS_IDS.has(bestCls)) continue;
-
-    const ymin = boxData[a * 4], xmin = boxData[a * 4 + 1];
-    const ymax = boxData[a * 4 + 2], xmax = boxData[a * 4 + 3];
     candidates.push({
-      x: xmin * fw, y: ymin * fh, w: (xmax - xmin) * fw, h: (ymax - ymin) * fh,
+      x: boxData[a * 4 + 1] * fw, y: boxData[a * 4] * fh,
+      w: (boxData[a * 4 + 3] - boxData[a * 4 + 1]) * fw, h: (boxData[a * 4 + 2] - boxData[a * 4]) * fh,
       score: bestScore,
     });
   }
 
-  // NMS
   candidates.sort((a, b) => b.score - a.score);
   const keep = [];
   for (const c of candidates) {
@@ -216,204 +183,25 @@ async function detectVehicles(video) {
   return keep;
 }
 
-// =============================== PLATE OCR (canvas-based, no Tesseract) ===============================
-function binarize(canvas) {
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const d = img.data;
-  const sat = new Uint32Array((canvas.width + 1) * (canvas.height + 1));
-  for (let y = 0; y < canvas.height; y++) {
-    for (let x = 0; x < canvas.width; x++) {
-      const i = (y * canvas.width + x) * 4;
-      const g = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-      d[i] = d[i + 1] = d[i + 2] = g;
-      sat[(y + 1) * (canvas.width + 1) + (x + 1)] = g + sat[y * (canvas.width + 1) + (x + 1)] + sat[(y + 1) * (canvas.width + 1) + x] - sat[y * (canvas.width + 1) + x];
-    }
-  }
-  const half = Math.max(3, Math.round(Math.min(canvas.width, canvas.height) / 14) * 2 + 1);
-  for (let y = 0; y < canvas.height; y++) {
-    for (let x = 0; x < canvas.width; x++) {
-      const x1 = Math.max(0, x - half), y1 = Math.max(0, y - half);
-      const x2 = Math.min(canvas.width, x + half), y2 = Math.min(canvas.height, y + half);
-      const sum = sat[y2 * (canvas.width + 1) + x2] - sat[y1 * (canvas.width + 1) + x2] - sat[y2 * (canvas.width + 1) + x1] + sat[y1 * (canvas.width + 1) + x1];
-      const local = sum / ((x2 - x1) * (y2 - y1)) - 8;
-      const pi = (y * canvas.width + x) * 4;
-      d[pi] = d[pi + 1] = d[pi + 2] = d[pi] > local ? 255 : 0;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-}
-
-function verticalProjection(canvas) {
-  const img = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height);
-  const proj = new Uint32Array(canvas.width);
-  for (let x = 0; x < canvas.width; x++) {
-    let count = 0;
-    for (let y = 0; y < canvas.height; y++) {
-      if (img.data[(y * canvas.width + x) * 4] === 0) count++;
-    }
-    proj[x] = count;
-  }
-  return proj;
-}
-
-function segmentChars(canvas) {
-  const proj = verticalProjection(canvas);
-  const chars = [];
-  let start = -1;
-  for (let x = 0; x < proj.length; x++) {
-    if (proj[x] > canvas.height * 0.1 && start === -1) start = x;
-    else if (proj[x] <= canvas.height * 0.1 && start !== -1) {
-      if (x - start > canvas.width * 0.04) chars.push({ x: start, w: x - start });
-      start = -1;
-    }
-  }
-  if (start !== -1 && proj.length - start > canvas.width * 0.04) chars.push({ x: start, w: proj.length - start });
-  return chars;
-}
-
-function charDensity(canvas, cx, cw) {
-  const img = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height);
-  const zones = [];
-  const zoneW = Math.max(1, Math.floor(cw / 3));
-  const zoneH = Math.max(1, Math.floor(canvas.height / 4));
-  for (let zy = 0; zy < 4; zy++) {
-    for (let zx = 0; zx < 3; zx++) {
-      let black = 0, total = 0;
-      for (let y = zy * zoneH; y < Math.min((zy + 1) * zoneH, canvas.height); y++) {
-        for (let x = cx + zx * zoneW; x < Math.min(cx + (zx + 1) * zoneW, canvas.width); x++) {
-          total++;
-          if (img.data[(y * canvas.width + x) * 4] === 0) black++;
-        }
-      }
-      zones.push(total > 0 ? black / total : 0);
-    }
-  }
-  return zones;
-}
-
-function matchChar(density) {
-  const templates = {
-    '0': '011,101,101,011', '1': '001,111,001,001',
-    '2': '110,001,010,111', '3': '111,001,001,111',
-    '4': '101,111,001,001', '5': '111,100,011,111',
-    '6': '011,100,111,111', '7': '111,001,010,010',
-    '8': '011,101,011,111', '9': '111,111,001,010',
-    'A': '010,101,111,101', 'B': '110,101,110,101',
-    'C': '011,100,100,011', 'D': '110,101,101,110',
-    'E': '111,100,110,111', 'F': '111,100,110,100',
-    'G': '011,100,111,011', 'H': '101,111,111,101',
-    'I': '111,010,010,111', 'J': '111,001,001,111',
-    'K': '101,110,110,101', 'L': '100,100,100,111',
-    'M': '101,111,111,101', 'N': '110,111,111,011',
-    'O': '011,101,101,011', 'P': '110,101,110,100',
-    'R': '110,101,111,101', 'S': '011,100,001,111',
-    'T': '111,010,010,010', 'U': '101,101,101,011',
-    'V': '101,101,101,010', 'X': '101,010,010,101',
-    'Y': '101,010,010,010', 'Z': '111,001,010,111',
-  };
-
-  let best = null, bestScore = -1;
-  for (const [ch, tmpl] of Object.entries(templates)) {
-    const tArr = tmpl.split(',').map(r => [...r].map(c => parseInt(c)));
-    let score = 0;
-    for (let y = 0; y < 4; y++) {
-      for (let x = 0; x < 3; x++) {
-        const t = tArr[y][x];
-        const d = density[y * 3 + x];
-        score += t === 1 ? d : (1 - d);
-      }
-    }
-    if (score > bestScore) { bestScore = score; best = ch; }
-  }
-  return bestScore > 6 ? best : null;
-}
-
+// =============================== OCR WORKER ===============================
 function initWorker() {
-  try {
-    ocrWorker = new Worker('ocr-worker.js');
-  } catch (e) {
-    console.warn('Worker no disponible, OCR en main thread');
-  }
+  try { ocrWorker = new Worker('ocr-worker.js'); } catch (e) { console.warn('Worker no disponible'); }
 }
 
 function readPlateInWorker(canvas) {
   return new Promise(resolve => {
-    if (!ocrWorker) {
-      try { const r = readPlateSync(canvas); resolve(r); } catch { resolve(null); }
-      return;
-    }
+    if (!ocrWorker) { resolve(null); return; }
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const handler = e => {
-      ocrWorker.removeEventListener('message', handler);
-      resolve(e.data.plate);
-    };
+    const handler = e => { ocrWorker.removeEventListener('message', handler); resolve(e.data.plate); };
     ocrWorker.addEventListener('message', handler);
     try {
       ocrWorker.postMessage({ imageData, width: canvas.width, height: canvas.height }, [imageData.data.buffer]);
-    } catch {
-      ocrWorker.postMessage({ imageData, width: canvas.width, height: canvas.height });
-    }
+    } catch { ocrWorker.postMessage({ imageData, width: canvas.width, height: canvas.height }); }
   });
 }
 
-function tick() { return new Promise(r => setTimeout(r, 0)); }
-
-// Fallback: OCR sincrono en main thread
-function readPlateSync(canvas) {
-  if (canvas.width < 40 || canvas.height < 20) return null;
-
-  // Limit input size for performance
-  let src = canvas;
-  if (canvas.width > 300 || canvas.height > 200) {
-    const r = Math.min(300 / canvas.width, 200 / canvas.height, 1);
-    src = document.createElement('canvas');
-    src.width = Math.round(canvas.width * r);
-    src.height = Math.round(canvas.height * r);
-    src.getContext('2d', { willReadFrequently: true }).drawImage(canvas, 0, 0, src.width, src.height);
-  }
-
-  const s = 3;
-  const scaled = document.createElement('canvas');
-  scaled.width = Math.max(60, Math.round(src.width * s));
-  scaled.height = Math.max(60, Math.round(src.height * s));
-  scaled.getContext('2d', { willReadFrequently: true }).drawImage(src, 0, 0, scaled.width, scaled.height);
-  binarize(scaled);
-
-  const chars = segmentChars(scaled);
-  if (chars.length < 4 || chars.length > 8) return null;
-
-  // Filter chars by height/width ratio
-  const valid = chars.filter(c => c.w / scaled.height > 0.15 && c.w / scaled.height < 1.2);
-  if (valid.length < 4) return null;
-
-  let result = '';
-  for (const c of valid) {
-    const density = charDensity(scaled, c.x, c.w);
-    const ch = matchChar(density);
-    if (!ch) return null;
-    result += ch;
-  }
-
-  return result;
-}
-
-function correctPlate(raw) {
-  const corrections = {
-    '0': 'O', 'O': '0', '1': 'I', 'I': '1', '2': 'Z', 'Z': '2',
-    '5': 'S', 'S': '5', '8': 'B', 'B': '8', '6': 'G', 'G': '6', '4': 'A', 'A': '4',
-  };
-  if (PLATE_PATTERNS.some(p => p.test(raw))) return raw;
-  for (let i = 0; i < raw.length; i++) {
-    if (!corrections[raw[i]]) continue;
-    for (const c of corrections[raw[i]]) {
-      const t = raw.slice(0, i) + c + raw.slice(i + 1);
-      if (PLATE_PATTERNS.some(p => p.test(t))) return t;
-    }
-  }
-  return null;
-}
+const tick = () => new Promise(r => setTimeout(r, 0));
 
 // =============================== CAMERA ===============================
 async function startCamera() {
@@ -455,7 +243,7 @@ window.toggleScan = async function () {
   scanTimer = setInterval(detect, 2500);
 };
 
-// =============================== DETECTION PIPELINE ===============================
+// =============================== DETECTION ===============================
 function captureFrame() {
   const v = document.getElementById('video');
   if (!v || !v.videoWidth) return null;
@@ -481,13 +269,10 @@ async function detect() {
 
   let plate = null;
   const fw = frame.width, fh = frame.height;
-
-  // Scan smaller windows in center area (faster than full-frame crop)
   const scanW = 240, scanH = 80;
-  for (let sy = 0; sy < 3; sy++) {
-    if (plate) break;
-    for (let sx = 0; sx < 4; sx++) {
-      if (plate) break;
+
+  for (let sy = 0; sy < 3 && !plate; sy++) {
+    for (let sx = 0; sx < 4 && !plate; sx++) {
       const rx = fw * 0.15 + sx * (fw * 0.7 / 4);
       const ry = fh * 0.25 + sy * (fh * 0.4 / 3);
       setStatus('Buscando...');
@@ -496,7 +281,6 @@ async function detect() {
     }
   }
 
-  // Vehicle detection via LiteRT.js
   let detectedBox = null;
   if (!plate && litertReady) {
     try {
@@ -506,9 +290,9 @@ async function detect() {
       for (const v of vehicles) {
         if (plate) break;
         setStatus('Leyendo patente...');
-        await tick();
         detectedBox = v;
         plate = await readPlateInWorker(crop(frame, v.x + v.w * 0.12, v.y + v.h * 0.5, v.w * 0.76, v.h * 0.35));
+        await tick();
       }
     } catch (e) { console.warn('liteRT error:', e); }
   }
@@ -521,12 +305,8 @@ async function detect() {
     if (corrected) {
       addToWindow(corrected);
       const consensus = getConsensus();
-      if (consensus) {
-        processPlate(consensus);
-        plateWindow.length = 0;
-      } else {
-        showOverlay(corrected, 'warning', 'Confirmando...');
-      }
+      if (consensus) { processPlate(consensus); plateWindow.length = 0; }
+      else showOverlay(corrected, 'warning', 'Confirmando...');
     } else {
       setStatus('Patente invalida: ' + plate);
       plateWindow.length = 0;
@@ -542,22 +322,17 @@ function drawDetectionBox(v) {
   if (!sf) return;
   const video = document.getElementById('video');
   if (!video.videoWidth) return;
-  const vw = video.clientWidth, vh = video.clientHeight;
-  const scaleX = vw / video.videoWidth, scaleY = vh / video.videoHeight;
+  const scaleX = video.clientWidth / video.videoWidth;
+  const scaleY = video.clientHeight / video.videoHeight;
   sf.style.left = (v.x * scaleX) + 'px';
   sf.style.top = (v.y * scaleY) + 'px';
   sf.style.width = (v.w * scaleX) + 'px';
   sf.style.height = (v.h * scaleY) + 'px';
   sf.style.transform = 'none';
   sf.classList.add('active');
-  setTimeout(() => sf.classList.remove('active'), 300);
-  // Reset to center after a bit
   setTimeout(() => {
-    sf.style.left = '';
-    sf.style.top = '';
-    sf.style.width = '';
-    sf.style.height = '';
-    sf.style.transform = '';
+    sf.classList.remove('active');
+    sf.style.left = sf.style.top = sf.style.width = sf.style.height = sf.style.transform = '';
   }, 1000);
 }
 
@@ -566,14 +341,27 @@ function showOverlay(plate, type, statusText) {
   if (!el) return;
   el.classList.remove('hidden');
   document.getElementById('overlay-plate').textContent = plate;
-  const stEl = document.getElementById('overlay-status');
-  stEl.className = 'overlay-status ' + type;
-  stEl.textContent = statusText;
+  const st = document.getElementById('overlay-status');
+  st.className = 'overlay-status ' + type;
+  st.textContent = statusText;
 }
 
 function hideOverlay() {
   const el = document.getElementById('overlay-result');
   if (el) el.classList.add('hidden');
+}
+
+function correctPlate(raw) {
+  const c = { '0':'O','O':'0','1':'I','I':'1','2':'Z','Z':'2','5':'S','S':'5','8':'B','B':'8','6':'G','G':'6','4':'A','A':'4' };
+  if (PLATE_PATTERNS.some(p => p.test(raw))) return raw;
+  for (let i = 0; i < raw.length; i++) {
+    if (!c[raw[i]]) continue;
+    for (const r of c[raw[i]]) {
+      const t = raw.slice(0, i) + r + raw.slice(i + 1);
+      if (PLATE_PATTERNS.some(p => p.test(t))) return t;
+    }
+  }
+  return null;
 }
 
 function processPlate(plate) {
@@ -590,9 +378,9 @@ function processPlate(plate) {
 
   scanHistory.unshift({ plate, status: css, time: Date.now() });
   if (scanHistory.length > 20) scanHistory.pop();
-  save('plateStats', scanCount);
-  save('plateHistory', scanHistory);
-  saveIDB('history', { plate, status: css, time: Date.now() });
+  localStorage.setItem('plateStats', JSON.stringify(scanCount));
+  localStorage.setItem('plateHistory', JSON.stringify(scanHistory));
+  saveIDB({ plate, status: css, time: Date.now() });
   updateStats();
   result.className = 'camera-result ' + css;
   document.getElementById('result-icon').textContent = ico;
@@ -658,7 +446,7 @@ window.addContact = function () {
   const phone = document.getElementById('new-contact-phone').value.trim();
   if (!name || !phone) { showToast('Ingrese nombre y telefono', 'error'); return; }
   contacts.push({ name, phone, type: 'custom', icon: '\u{1F4DE}' });
-  save('contacts', contacts);
+  localStorage.setItem('contacts', JSON.stringify(contacts));
   renderContacts();
   document.getElementById('new-contact-name').value = '';
   document.getElementById('new-contact-phone').value = '';
@@ -688,7 +476,5 @@ document.addEventListener('DOMContentLoaded', function () {
     if (txt !== '---') { document.getElementById('reg-plate').value = txt; window.navigate('register'); }
   };
   updateStats(); updateHistory(); renderContacts(); initLiteRT(); initWorker(); initDB();
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  }
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 });
