@@ -74,7 +74,7 @@ function updateFPS() {
   }
 }
 
-function runDiagnostics() {
+async function runDiagnostics() {
   const list = document.getElementById('check-list');
   const summary = document.getElementById('check-summary');
   if (!list) return;
@@ -97,11 +97,25 @@ function runDiagnostics() {
   }
   items.device.push({ icon: 'ok', label: 'Modo ' + (isMobile ? 'MOVIL' : 'ESCRITORIO') });
 
-  // ---- Navegador ----
+// ---- Navegador ----
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     items.browser.push({ icon: 'err', label: 'Camara no soportada', fix: 'Usa Chrome o Safari reciente.' }); errors++;
+  } else if (navigator.permissions && navigator.permissions.query) {
+    try {
+      const perm = await navigator.permissions.query({ name: 'camera' });
+      if (perm.state === 'granted') {
+        items.browser.push({ icon: 'ok', label: 'Camara con permiso' });
+      } else if (perm.state === 'denied') {
+        items.browser.push({ icon: 'err', label: 'Permiso de camara denegado', detail: 'Bloqueaste el acceso a la camara.', fix: 'Ve a ajustes del navegador y permite el acceso a la camara, luego recarga.' }); errors++;
+      } else {
+        items.browser.push({ icon: 'warn', label: 'Permiso de camara pendiente', detail: 'Se pedira al iniciar el escaneo.' });
+      }
+      perm.onchange = () => runDiagnostics();
+    } catch (e) {
+      items.browser.push({ icon: 'warn', label: 'Permiso de camara desconocido', detail: 'Se pedira al iniciar el escaneo.' });
+    }
   } else {
-    items.browser.push({ icon: 'ok', label: 'Camara disponible' });
+    items.browser.push({ icon: 'warn', label: 'Permiso de camara no verificable', detail: 'Se pedira al iniciar el escaneo.' });
   }
   let webglOk = false;
   try { webglOk = !!document.createElement('canvas').getContext('webgl'); } catch (e) {}
