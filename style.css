@@ -681,6 +681,58 @@ html, body {
 
 .btn-full { margin: 0 !important; width: 100% !important; }
 
+/* ============================ INSTALL BANNER ============================ */
+.install-banner {
+  position: fixed;
+  bottom: calc(var(--nav-h) + var(--safe-bottom) + 8px);
+  left: 16px;
+  right: 16px;
+  max-width: calc(480px - 32px);
+  margin: 0 auto;
+  z-index: 250;
+  background: var(--card);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  backdrop-filter: blur(8px);
+  transition: opacity .3s, transform .3s;
+}
+.install-banner.hidden { display: none; }
+.install-icon { font-size: 22px; flex-shrink: 0; }
+.install-text { flex: 1; min-width: 0; }
+.install-title { font-size: 13px; font-weight: 700; color: var(--text); }
+.install-desc { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.install-btn {
+  flex-shrink: 0;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .2s;
+}
+.install-btn:active { background: var(--primary-dark); }
+.install-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  font-family: inherit;
+}
+.install-close:active { color: var(--text); }
+
 /* ============================ TOAST ============================ */
 .toast {
   position: fixed;

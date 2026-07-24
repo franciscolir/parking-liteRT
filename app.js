@@ -584,4 +584,24 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('modal-overlay').onclick = function (e) { if (e.target === this) window.closeModal(); };
   updateHistory(); renderContacts(); initDB(); initModels(); runDiagnostics();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+  // ---- PWA Install ----
+  let deferredPrompt = null;
+  const installBanner = document.getElementById('install-banner');
+  const installBtn = document.getElementById('install-btn');
+  const installClose = document.getElementById('install-close');
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    deferredPrompt = e;
+    installBanner.classList.remove('hidden');
+  });
+  installBtn.onclick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const result = await deferredPrompt.userChoice;
+    if (result.outcome === 'accepted') installBanner.classList.add('hidden');
+    deferredPrompt = null;
+  };
+  installClose.onclick = () => { installBanner.classList.add('hidden'); deferredPrompt = null; };
+  window.addEventListener('appinstalled', () => { installBanner.classList.add('hidden'); deferredPrompt = null; });
 });
