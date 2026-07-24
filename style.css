@@ -408,8 +408,12 @@ html, body {
   height: 2px;
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
   top: 32.5%;
-  animation: scanMove 2s ease-in-out infinite;
+  opacity: .3;
+  transition: opacity .3s;
+}
+.camera-container.scanning .scan-line {
   opacity: .7;
+  animation: scanMove 2s ease-in-out infinite;
 }
 
 @keyframes scanMove {

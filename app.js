@@ -252,7 +252,7 @@ function setStatus(msg) { const el = document.getElementById('cam-status'); if (
 function stopCamera() {
   running = false;
   if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-  if (camera) camera.stop();
+  if (camera) { camera.stop(); camera = null; }
   lastPlate = null;
   lastPlateBox = null;
   noDetectFrames = 0;
@@ -264,6 +264,7 @@ function stopCamera() {
   document.getElementById('scan-toggle').checked = false;
   document.getElementById('switch-label').textContent = 'Iniciar deteccion';
   document.getElementById('cam-status').classList.remove('scanning');
+  document.getElementById('cam-container').classList.remove('scanning');
   hideOverlay();
   clearCanvasOverlay();
   setStatus('En espera');
@@ -275,6 +276,7 @@ window.toggleScan = async function () {
   running = true;
   document.getElementById('switch-label').textContent = 'Apagar camara';
   document.getElementById('cam-status').classList.add('scanning');
+  document.getElementById('cam-container').classList.add('scanning');
   setStatus('Escaneando...');
   lastPlate = null;
   noDetectFrames = 0;
@@ -557,8 +559,6 @@ document.addEventListener('DOMContentLoaded', function () {
     const txt = document.getElementById('result-plate').textContent;
     if (txt !== '---') { document.getElementById('reg-plate').value = txt; window.navigate('register'); }
   };
-  const mb = document.getElementById('mode-badge');
-  if (mb) mb.textContent = isMobile ? 'MOVIL' : 'DESK';
   updateHistory(); renderContacts(); initDB(); initModels(); runDiagnostics();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 });
