@@ -1,4 +1,4 @@
-const CACHE = 'platedetect-v5';
+const CACHE = 'platedetect-v6';
 const BASE = (self.location.pathname.replace(/\/sw\.js$/, '') || '/') + '/';
 const ASSETS = [
   BASE,

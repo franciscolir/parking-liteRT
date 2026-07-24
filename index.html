@@ -22,41 +22,35 @@
     <h2>PlateDetect</h2>
     <p>Lectura de patentes en vivo con deteccion de vehiculos registrados y denunciados.</p>
   </div>
-  <div class="stats-grid">
-    <div class="stat-card"><div class="num" id="stat-total">0</div><div class="label">Escaneos</div></div>
-    <div class="stat-card"><div class="num" id="stat-reg">0</div><div class="label">Registradas</div></div>
-    <div class="stat-card"><div class="num" id="stat-stolen">0</div><div class="label">Denunciadas</div></div>
-    <div class="stat-card"><div class="num" id="stat-unknown">0</div><div class="label">Desconocidas</div></div>
-  </div>
-  <button class="btn-primary" id="btn-home-scan">Iniciar escaneo</button>
 
-  <div class="view-header"><h1>Base de Datos Local</h1></div>
-  <div class="card">
-    <div class="card-title">Patentes registradas</div>
-    <div class="plate-tags">
-      <span class="tag tag-reg">ABC123</span>
-      <span class="tag tag-reg">DEF456</span>
-      <span class="tag tag-reg">GHI789</span>
-      <span class="tag tag-reg">JKL012</span>
-    </div>
+  <button class="btn-primary" id="btn-home-scan">Iniciar escaneo</button>
+  <button class="btn-secondary" id="btn-home-plates">Ver patentes registradas</button>
+
+  <div class="card check-card">
+    <div class="check-card-title">&#9989; Estado del sistema</div>
+    <div id="check-list"></div>
   </div>
-  <div class="card">
-    <div class="card-title">Patentes denunciadas</div>
-    <div class="plate-tags">
-      <span class="tag tag-stolen">XYZ789</span>
-      <span class="tag tag-stolen">LMN456</span>
-    </div>
+
+  <div style="height:16px"></div>
+</div>
+
+<!-- =============== VIEW: PLATES =============== -->
+<div id="view-plates" class="view">
+  <div class="view-header">
+    <h1>Patentes registradas</h1>
+    <button class="btn-back" id="btn-plates-back">&#8592;</button>
   </div>
-  <div class="db-note">
-    &#128161; La base de datos se almacena en memoria (variable <strong>DB</strong>).
-    Para persistencia real puedes usar <strong>localStorage</strong>, <strong>IndexedDB</strong> o sincronizar con un backend.
+  <div class="search-box">
+    <svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+    <input type="text" id="plate-search" placeholder="Buscar patente..." autocomplete="off">
   </div>
+  <div class="plates-table" id="plates-table"></div>
   <div style="height:16px"></div>
 </div>
 
 <!-- =============== VIEW: CAMERA =============== -->
 <div id="view-camera" class="view">
-  <div class="view-header"><h1>Lector de Patentes</h1><span class="badge" id="cam-status">En espera</span></div>
+  <div class="view-header"><h1>Lector de Patentes</h1><span class="badge mode-badge" id="mode-badge">DESK</span><span class="badge" id="cam-status">En espera</span></div>
   <div class="camera-container" id="cam-container">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="overlay-canvas" class="overlay-canvas"></canvas>

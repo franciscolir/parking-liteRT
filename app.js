@@ -74,6 +74,112 @@ function updateFPS() {
   }
 }
 
+function runDiagnostics() {
+  const list = document.getElementById('check-list');
+  if (!list) return;
+
+  let html = '';
+  let hasIssues = false;
+
+  // ---- Dispositivo ----
+  html += '<div class="check-section"><div class="check-section-title">Dispositivo</div>';
+
+  // Memoria
+  const mem = navigator.deviceMemory !== undefined ? navigator.deviceMemory : null;
+  if (mem !== null) {
+    if (mem < 2) { html += '<div class="check-item"><div class="check-item-icon err">&#33;</div><div class="check-item-text"><div class="check-item-label">Memoria insuficiente</div><div class="check-item-detail">Detectado ' + mem + ' GB. Se recomienda minimo 2 GB.</div></div></div>'; hasIssues = true; }
+    else if (mem < 4) { html += '<div class="check-item"><div class="check-item-icon warn">&#9888;</div><div class="check-item-text"><div class="check-item-label">Memoria limitada</div><div class="check-item-detail">' + mem + ' GB. Podria ser lento.</div></div></div>'; }
+    else { html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Memoria ' + mem + ' GB</div></div></div>'; }
+  } else {
+    html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Dispositivo compatible</div></div></div>';
+  }
+
+  // CPU cores
+  const cpu = navigator.hardwareConcurrency || null;
+  if (cpu !== null) {
+    if (cpu < 4) { html += '<div class="check-item"><div class="check-item-icon warn">&#9888;</div><div class="check-item-text"><div class="check-item-label">Procesador de ' + cpu + ' nucleos</div><div class="check-item-detail">La deteccion sera mas lenta.</div></div></div>'; }
+    else { html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Procesador ' + cpu + ' nucleos</div></div></div>'; }
+  }
+
+  // Movil o escritorio
+  html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Modo ' + (isMobile ? 'MOVIL' : 'ESCRITORIO') + '</div></div>';
+  html += '</div>';
+
+  // ---- Navegador ----
+  html += '<div class="check-section"><div class="check-section-title">Navegador</div>';
+
+  // Camara
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    html += '<div class="check-item"><div class="check-item-icon err">&#33;</div><div class="check-item-text"><div class="check-item-label">Camara no soportada</div><div class="check-item-detail">Usa Chrome o Safari reciente.</div><div class="check-item-fix">Actualiza tu navegador.</div></div></div>';
+    hasIssues = true;
+  } else {
+    html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Camara disponible</div></div>';
+  }
+
+  // WebGL
+  let webglOk = false;
+  try { webglOk = !!document.createElement('canvas').getContext('webgl'); } catch (e) {}
+  if (webglOk) {
+    html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Aceleracion grafica (WebGL)</div></div>';
+  } else {
+    html += '<div class="check-item"><div class="check-item-icon warn">&#9888;</div><div class="check-item-text"><div class="check-item-label">Sin aceleracion grafica</div><div class="check-item-detail">Los modelos usaran CPU, mas lento.</div></div>';
+  }
+
+  // WASM
+  const wasmOk = typeof WebAssembly === 'object' && typeof WebAssembly.instantiate === 'function';
+  if (wasmOk) {
+    html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">WebAssembly</div></div>';
+  } else {
+    html += '<div class="check-item"><div class="check-item-icon err">&#33;</div><div class="check-item-text"><div class="check-item-label">WebAssembly no soportado</div><div class="check-item-detail">Necesario para los modelos IA.</div><div class="check-item-fix">Actualiza tu navegador.</div></div>';
+    hasIssues = true;
+  }
+
+  // HTTPS
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+    html += '<div class="check-item"><div class="check-item-icon err">&#33;</div><div class="check-item-text"><div class="check-item-label">Conexion no segura (HTTP)</div><div class="check-item-detail">La camara requiere HTTPS.</div><div class="check-item-fix">Usa HTTPS.</div></div>';
+    hasIssues = true;
+  }
+  html += '</div>';
+
+  // ---- Modelos IA ----
+  html += '<div class="check-section"><div class="check-section-title">Modelos de IA</div>';
+
+  if (!detector || detector.mock) {
+    html += '<div class="check-item"><div class="check-item-icon ' + (detector ? 'warn' : 'warn') + '">&#9888;</div><div class="check-item-text"><div class="check-item-label">Detector no cargado</div><div class="check-item-detail">Modelo YOLOv8</div></div>';
+  } else {
+    html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Detector YOLOv8 activo</div></div>';
+  }
+
+  if (!ocr || ocr.mock) {
+    html += '<div class="check-item"><div class="check-item-icon warn">&#9888;</div><div class="check-item-text"><div class="check-item-label">OCR no cargado</div><div class="check-item-detail">Modelo PP-OCRv4</div></div>';
+  } else {
+    html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">OCR PP-OCRv4 activo</div></div>';
+  }
+  html += '</div>';
+
+  // ---- Resumen ----
+  if (!hasIssues && detector && !detector.mock && ocr && !ocr.mock) {
+    html = '<div class="check-item" style="margin-bottom:14px"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Todo listo para escanear</div></div></div>' + html;
+  }
+
+  list.innerHTML = html;
+}
+
+function renderPlatesTable(filter) {
+  const table = document.getElementById('plates-table');
+  if (!table) return;
+  const all = [
+    ...DB.registered.map(p => ({ plate: p, type: 'reg' })),
+    ...DB.stolen.map(p => ({ plate: p, type: 'stolen' })),
+  ];
+  const q = (filter || '').toUpperCase().trim();
+  const rows = q ? all.filter(r => r.plate.includes(q)) : all;
+  if (!rows.length) { table.innerHTML = '<div class="plates-empty">Sin resultados</div>'; return; }
+  table.innerHTML = rows.map(r =>
+    '<div class="plate-row"><span class="plate-row-plate">' + r.plate + '</span><span class="plate-row-badge ' + r.type + '">' + (r.type === 'reg' ? 'Registrada' : 'Denunciada') + '</span></div>'
+  ).join('');
+}
+
 async function initModels() {
   setStatus('Cargando modelos...');
   const hud = document.getElementById('hud-gpu');
@@ -100,6 +206,7 @@ async function initModels() {
     ]);
   } catch (e) { console.warn('warmup skip:', e.message); }
 
+  runDiagnostics();
   if (detLoaded && ocrLoaded) setStatus('Listo. Presiona Iniciar');
   else setStatus('Modo demo - faltan modelos');
   console.log('Detector:', detLoaded ? 'OK' : 'FAIL', 'OCR:', ocrLoaded ? 'OK' : 'FAIL');
@@ -339,7 +446,6 @@ function processPlate(plate) {
   localStorage.setItem('plateStats', JSON.stringify(scanCount));
   localStorage.setItem('plateHistory', JSON.stringify(scanHistory));
   saveIDB({ plate, status: css, time: Date.now() });
-  updateStats();
   result.className = 'camera-result ' + css;
   document.getElementById('result-icon').textContent = ico;
   document.getElementById('result-status').textContent = st;
@@ -360,13 +466,6 @@ function updateHistory() {
   }).join('');
 }
 
-function updateStats() {
-  document.getElementById('stat-total').textContent = scanCount.total;
-  document.getElementById('stat-reg').textContent = scanCount.registered;
-  document.getElementById('stat-stolen').textContent = scanCount.stolen;
-  document.getElementById('stat-unknown').textContent = scanCount.unknown;
-}
-
 window.navigate = function (view) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -376,7 +475,8 @@ window.navigate = function (view) {
   if (nEl) nEl.classList.add('active');
   if (view !== 'camera') stopCamera();
   if (view === 'camera') updateHistory();
-  if (view === 'home') updateStats();
+  if (view === 'home') runDiagnostics();
+  if (view === 'plates') renderPlatesTable();
   if (view === 'call') renderContacts();
 };
 
@@ -421,6 +521,9 @@ function showToast(msg, type) {
 
 document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('btn-home-scan').onclick = () => window.navigate('camera');
+  document.getElementById('btn-home-plates').onclick = () => window.navigate('plates');
+  document.getElementById('btn-plates-back').onclick = () => window.navigate('home');
+  document.getElementById('plate-search').oninput = function() { renderPlatesTable(this.value); };
   document.getElementById('scan-toggle').onchange = window.toggleScan;
   document.getElementById('btn-send-whatsapp').onclick = window.sendWhatsApp;
   document.getElementById('btn-add-contact').onclick = window.addContact;
@@ -431,6 +534,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const txt = document.getElementById('result-plate').textContent;
     if (txt !== '---') { document.getElementById('reg-plate').value = txt; window.navigate('register'); }
   };
-  updateStats(); updateHistory(); renderContacts(); initDB(); initModels();
+  const mb = document.getElementById('mode-badge');
+  if (mb) mb.textContent = isMobile ? 'MOVIL' : 'DESK';
+  updateHistory(); renderContacts(); initDB(); initModels(); runDiagnostics();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 });
