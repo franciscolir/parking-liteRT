@@ -1,13 +1,12 @@
-// =============================== IMPORTS ===============================
-import { loadLiteRt, loadAndCompile, Tensor } from 'https://cdn.jsdelivr.net/npm/@litertjs/core/+esm';
+import * as ort from 'onnxruntime-web';
+import { validatePlate, normalizePlate } from './validator.js';
+import { Corrector } from './corrector.js';
+import { FallbackDetector } from './fallback.js';
 
-// =============================== CONSTANTS ===============================
 const DB = {
   registered: ['ABC123', 'DEF456', 'GHI789', 'JKL012', 'MNO345', 'PQR678', 'STU901', 'BBBB10'],
   stolen: ['XYZ789', 'LMN456', 'WVU321'],
 };
-const PLATE_PATTERNS = [/^[A-Z]{4}\d{2}$/, /^[A-Z]{2}\d{4}$/];
-const VEHICLE_CLASS_IDS = new Set([3, 4, 6, 8]);
 const DEFAULT_CONTACTS = [
   { name: 'Policia', phone: '911', type: 'police', icon: '\u{1F6A8}' },
   { name: 'Emergencias', phone: '107', type: 'emergency', icon: '\u{1F691}' },
@@ -15,16 +14,16 @@ const DEFAULT_CONTACTS = [
   { name: 'Hospital', phone: '108', type: 'hospital', icon: '\u{1F3E5}' },
 ];
 
-// =============================== STATE ===============================
 let scanHistory = JSON.parse(localStorage.getItem('plateHistory') || '[]');
 let scanCount = JSON.parse(localStorage.getItem('plateStats') || '{"total":0,"registered":0,"stolen":0,"unknown":0}');
 let contacts = JSON.parse(localStorage.getItem('contacts') || '[]');
 if (!contacts.length) contacts = JSON.parse(JSON.stringify(DEFAULT_CONTACTS));
-let mediaStream = null, isScanning = false, scanTimer = null;
-let liteModel = null, litertReady = false, INPUT_SIZE = 320;
-let ocrWorker = null;
+let mediaStream = null, isScanning = false, rafId = null;
+let detector = null, ocr = null, corrector = null, fallbackDetector = null;
+let ocrChars = [];
 
-// =============================== SLIDING WINDOW ===============================
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
 const plateWindow = [];
 const WINDOW_SIZE = 5;
 
@@ -42,7 +41,6 @@ function getConsensus() {
   return max >= 3 ? best : null;
 }
 
-// =============================== FPS COUNTER ===============================
 let fpsFrames = 0, fpsLastTime = performance.now();
 function updateFPS() {
   fpsFrames++;
@@ -56,19 +54,6 @@ function updateFPS() {
   }
 }
 
-// =============================== NORMALIZACION OCR ===============================
-function normalizeOCR(text) {
-  let t = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const map = { O: '0', I: '1', Z: '2', S: '5', B: '8' };
-  if (PLATE_PATTERNS[0].test(t)) {
-    t = t.slice(0, 4) + (map[t[4]] || t[4]) + (map[t[5]] || t[5]);
-  } else if (PLATE_PATTERNS[1].test(t)) {
-    t = t.slice(0, 2) + t.slice(2).replace(/[OISZB]/g, c => map[c] || c);
-  }
-  return t;
-}
-
-// =============================== INDEXEDDB ===============================
 let idb = null;
 
 function initDB() {
@@ -90,8 +75,13 @@ function saveIDB(value) {
   tx.objectStore('history').put(value);
 }
 
-// =============================== LITERT.JS ===============================
-let liteLoading = false, useGPU = false;
+async function fetchArrayBuffer(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Fetch ' + url + ' ' + res.status);
+  return await res.arrayBuffer();
+}
+
+let useGPU = false;
 
 function detectGPU() {
   useGPU = !!navigator.gpu;
@@ -99,115 +89,295 @@ function detectGPU() {
   if (hud) hud.textContent = useGPU ? 'GPU' : 'CPU';
 }
 
-async function initLiteRT() {
-  if (liteModel || litertReady || liteLoading) return;
-  liteLoading = true;
-  setStatus('Cargando liteRT.js...');
+async function initModels() {
+  setStatus('Cargando modelos...');
   detectGPU();
+
+  const ep = useGPU ? ['webgpu', 'webgl', 'wasm'] : ['webgl', 'wasm'];
+
   try {
-    await loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core/wasm/', { jspi: true });
-    liteModel = await loadAndCompile(
-      'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/latest/efficientdet_lite0.tflite',
-      { accelerator: useGPU ? 'webgpu' : 'wasm' }
-    );
-    INPUT_SIZE = liteModel.getInputDetails()[0]?.shape[1] || 320;
-    console.log('liteRT outputs:', liteModel.getOutputDetails().map(d => d.name + ' ' + JSON.stringify(d.shape)));
-    setStatus('liteRT.js listo');
-    litertReady = true; liteLoading = false;
+    corrector = new Corrector();
+    fallbackDetector = new FallbackDetector();
+
+    setStatus('Cargando detector YOLOv8...');
+    const detBuf = await fetchArrayBuffer('models/yolov8_plate.onnx');
+    detector = await ort.InferenceSession.create(detBuf, { executionProviders: ep });
+
+    setStatus('Cargando OCR PP-OCRv4...');
+    const ocrBuf = await fetchArrayBuffer('models/ppocr_rec.onnx');
+    ocr = await ort.InferenceSession.create(ocrBuf, { executionProviders: ep });
+
+    const resp = await fetch('models/ppocr_keys.json');
+    ocrChars = await resp.json();
+
+    setStatus('Calentando modelos...');
+    try {
+      await Promise.race([
+        Promise.all([warmupDetector(), warmupOCR()]),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
+      ]);
+    } catch (e) { console.warn('warmup skip:', e.message); }
+
+    setStatus('Modelos listos');
+    console.log('YOLO inputs:', detector.inputNames, 'outputs:', detector.outputNames);
+    console.log('OCR inputs:', ocr.inputNames, 'outputs:', ocr.outputNames);
   } catch (e) {
-    console.warn('liteRT.js no disponible:', e);
-    setStatus('Modo sin IA'); liteLoading = false;
+    console.error('initModels error:', e);
+    setStatus('Error: ' + e.message);
   }
 }
 
-function tensorFromFrame(frame) {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = INPUT_SIZE;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(frame, 0, 0, INPUT_SIZE, INPUT_SIZE);
-  const pixels = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
-  const data = new Float32Array(INPUT_SIZE * INPUT_SIZE * 3);
-  for (let i = 0; i < INPUT_SIZE * INPUT_SIZE; i++) {
-    data[i * 3] = pixels[i * 4] / 255;
-    data[i * 3 + 1] = pixels[i * 4 + 1] / 255;
-    data[i * 3 + 2] = pixels[i * 4 + 2] / 255;
-  }
-  return new Tensor(data, [1, INPUT_SIZE, INPUT_SIZE, 3]);
+async function warmupDetector() {
+  if (!detector) return;
+  const sz = 640;
+  const dummy = new ort.Tensor('float32', new Float32Array(3 * sz * sz), [1, 3, sz, sz]);
+  await detector.run({ [detector.inputNames[0]]: dummy });
 }
 
-async function detectVehicles(video) {
-  if (!liteModel || !litertReady) return [];
-  const inputTensor = tensorFromFrame(video);
-  const outputs = await liteModel.run(inputTensor);
-  inputTensor.delete();
+async function warmupOCR() {
+  if (!ocr) return;
+  const w = 100, h = 48;
+  const dummy = new ort.Tensor('float32', new Float32Array(3 * h * w), [1, 3, h, w]);
+  await ocr.run({ [ocr.inputNames[0]]: dummy });
+}
 
-  const details = liteModel.getOutputDetails();
-  if (!outputs[0] || !outputs[1]) { outputs.forEach(o => o?.delete()); return []; }
+let _detCanvas = null;
+let _detCtx = null;
+let _detTransform = null;
 
-  const boxData = await outputs[0].toTypedArray();
-  const scoreData = await outputs[1].toTypedArray();
-  outputs.forEach(o => o.delete());
+function preprocessDetector(video) {
+  const vw = video.videoWidth || video.width || 0;
+  const vh = video.videoHeight || video.height || 0;
+  const sz = 640;
+  const maxSize = Math.max(vw, vh);
+  const scale = sz / maxSize;
+  const ox = (sz - vw * scale) / 2;
+  const oy = (sz - vh * scale) / 2;
+  _detTransform = { scale, ox, oy, vw, vh };
 
-  const numAnchors = details[0].shape[1];
-  const numClasses = details[1].shape[2];
-  const fw = video.videoWidth, fh = video.videoHeight;
-  const candidates = [];
+  if (!_detCanvas) {
+    _detCanvas = document.createElement('canvas');
+    _detCtx = _detCanvas.getContext('2d', { willReadFrequently: true });
+  }
+  _detCanvas.width = sz;
+  _detCanvas.height = sz;
+  _detCtx.fillStyle = '#000';
+  _detCtx.fillRect(0, 0, sz, sz);
+  _detCtx.drawImage(video, ox, oy, vw * scale, vh * scale);
 
-  for (let a = 0; a < numAnchors; a++) {
-    let bestScore = 0, bestCls = -1;
-    for (let c = 0; c < numClasses; c++) {
-      const sc = scoreData[a * numClasses + c];
-      if (sc > bestScore) { bestScore = sc; bestCls = c; }
-    }
-    if (bestScore < 0.35 || !VEHICLE_CLASS_IDS.has(bestCls)) continue;
-    candidates.push({
-      x: boxData[a * 4 + 1] * fw, y: boxData[a * 4] * fh,
-      w: (boxData[a * 4 + 3] - boxData[a * 4 + 1]) * fw, h: (boxData[a * 4 + 2] - boxData[a * 4]) * fh,
-      score: bestScore,
+  const rgba = _detCtx.getImageData(0, 0, sz, sz).data;
+  const ch = sz * sz;
+  const data = new Float32Array(3 * ch);
+  for (let i = 0; i < ch; i++) {
+    const pi = i << 2;
+    data[i] = rgba[pi] / 255;
+    data[ch + i] = rgba[pi + 1] / 255;
+    data[2 * ch + i] = rgba[pi + 2] / 255;
+  }
+  return new ort.Tensor('float32', data, [1, 3, sz, sz]);
+}
+
+function decodeYOLO(data, dims, confThreshold, iouThreshold) {
+  const numPreds = dims[2];
+  const raw = [];
+  const maxCx = Math.max(...Array.from(data.subarray(0, Math.min(numPreds, 100))));
+  const normalized = maxCx < 2;
+  const sc = normalized ? 640 : 1;
+
+  for (let i = 0; i < numPreds; i++) {
+    const cx = data[i];
+    const cy = data[numPreds + i];
+    const w = data[2 * numPreds + i];
+    const h = data[3 * numPreds + i];
+    const conf = data[4 * numPreds + i];
+    if (conf < 0.05) continue;
+    raw.push({
+      x1: (cx - w / 2) * sc,
+      y1: (cy - h / 2) * sc,
+      x2: (cx + w / 2) * sc,
+      y2: (cy + h / 2) * sc,
+      score: conf,
     });
   }
 
-  candidates.sort((a, b) => b.score - a.score);
-  const keep = [];
-  for (const c of candidates) {
-    let overlap = false;
-    for (const k of keep) {
-      const ix1 = Math.max(c.x, k.x), iy1 = Math.max(c.y, k.y);
-      const ix2 = Math.min(c.x + c.w, k.x + k.w), iy2 = Math.min(c.y + c.h, k.y + k.h);
-      const inter = Math.max(0, ix2 - ix1) * Math.max(0, iy2 - iy1);
-      const union = c.w * c.h + k.w * k.h - inter;
-      if (inter / union > 0.5) { overlap = true; break; }
+  raw.sort((a, b) => b.score - a.score);
+  const picked = new Array(raw.length).fill(false);
+  const result = [];
+  for (let i = 0; i < raw.length; i++) {
+    if (picked[i]) continue;
+    if (raw[i].score < confThreshold) continue;
+    result.push(raw[i]);
+    for (let j = i + 1; j < raw.length; j++) {
+      if (picked[j]) continue;
+      const iou = iouCalc(raw[i], raw[j]);
+      if (iou >= iouThreshold) picked[j] = true;
     }
-    if (!overlap) keep.push(c);
   }
-  return keep;
+  return result;
 }
 
-// =============================== OCR WORKER ===============================
-function initWorker() {
-  try { ocrWorker = new Worker('ocr-worker.js'); } catch (e) { console.warn('Worker no disponible'); }
+function iouCalc(a, b) {
+  const x1 = Math.max(a.x1, b.x1);
+  const y1 = Math.max(a.y1, b.y1);
+  const x2 = Math.min(a.x2, b.x2);
+  const y2 = Math.min(a.y2, b.y2);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const areaA = (a.x2 - a.x1) * (a.y2 - a.y1);
+  const areaB = (b.x2 - b.x1) * (b.y2 - b.y1);
+  return inter / (areaA + areaB - inter + 1e-6);
 }
 
-function readPlateInWorker(canvas) {
-  return new Promise(resolve => {
-    if (!ocrWorker) { resolve(null); return; }
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const handler = e => { ocrWorker.removeEventListener('message', handler); resolve(e.data.plate); };
-    ocrWorker.addEventListener('message', handler);
-    try {
-      ocrWorker.postMessage({ imageData, width: canvas.width, height: canvas.height }, [imageData.data.buffer]);
-    } catch { ocrWorker.postMessage({ imageData, width: canvas.width, height: canvas.height }); }
+function toOriginalBox(box) {
+  const t = _detTransform;
+  return {
+    x1: Math.max(0, (box.x1 - t.ox) / t.scale),
+    y1: Math.max(0, (box.y1 - t.oy) / t.scale),
+    x2: Math.min(t.vw, (box.x2 - t.ox) / t.scale),
+    y2: Math.min(t.vh, (box.y2 - t.oy) / t.scale),
+    score: box.score,
+  };
+}
+
+async function detectPlate(video) {
+  if (!detector) return [];
+  const input = preprocessDetector(video);
+  const results = await detector.run({ [detector.inputNames[0]]: input });
+  const output = results[detector.outputNames[0]];
+
+  const confThreshold = 0.15;
+  const iouThreshold = 0.45;
+
+  let boxData;
+  if (output.data instanceof Float32Array) {
+    boxData = output.data;
+  } else {
+    boxData = new Float32Array(output.data.length);
+    for (let i = 0; i < output.data.length; i++) boxData[i] = output.data[i];
+  }
+
+  const rawBoxes = decodeYOLO(boxData, output.dims, confThreshold, iouThreshold);
+  const mapped = rawBoxes.map(b => toOriginalBox(b)).filter(b => {
+    const w = b.x2 - b.x1;
+    const h = b.y2 - b.y1;
+    return w >= 30 && h >= 10 && w / h < 12;
   });
+  return mapped;
 }
 
-const tick = () => new Promise(r => setTimeout(r, 0));
+let _cropCanvas = null;
+let _cropCtx = null;
 
-// =============================== CAMERA ===============================
+function cropImageData(video, box) {
+  const w = Math.round(box.x2 - box.x1);
+  const h = Math.round(box.y2 - box.y1);
+  if (w < 4 || h < 4) return null;
+  if (!_cropCanvas) {
+    _cropCanvas = document.createElement('canvas');
+    _cropCtx = _cropCanvas.getContext('2d', { willReadFrequently: true });
+  }
+  _cropCanvas.width = w;
+  _cropCanvas.height = h;
+  _cropCtx.drawImage(video, box.x1, box.y1, w, h, 0, 0, w, h);
+  return _cropCtx.getImageData(0, 0, w, h);
+}
+
+let _ocrSrcCanvas = null;
+let _ocrDstCanvas = null;
+let _ocrDstCtx = null;
+
+function preprocessOCR(imageData) {
+  const oldW = imageData.width;
+  const oldH = imageData.height;
+  const newH = 48;
+  const newW = Math.max(1, Math.round(oldW * (newH / oldH)));
+
+  if (!_ocrSrcCanvas) {
+    _ocrSrcCanvas = document.createElement('canvas');
+    _ocrDstCanvas = document.createElement('canvas');
+    _ocrDstCtx = _ocrDstCanvas.getContext('2d', { willReadFrequently: true });
+  }
+  _ocrSrcCanvas.width = oldW;
+  _ocrSrcCanvas.height = oldH;
+  _ocrSrcCanvas.getContext('2d').putImageData(imageData, 0, 0);
+
+  _ocrDstCanvas.width = newW;
+  _ocrDstCanvas.height = newH;
+  _ocrDstCtx.drawImage(_ocrSrcCanvas, 0, 0, newW, newH);
+
+  const resized = _ocrDstCtx.getImageData(0, 0, newW, newH);
+  const pixels = resized.data;
+  const nchw = new Float32Array(3 * newH * newW);
+  for (let y = 0; y < newH; y++) {
+    for (let x = 0; x < newW; x++) {
+      const srcIdx = (y * newW + x) * 4;
+      const dstIdx = y * newW + x;
+      nchw[dstIdx] = pixels[srcIdx] / 127.5 - 1.0;
+      nchw[newH * newW + dstIdx] = pixels[srcIdx + 1] / 127.5 - 1.0;
+      nchw[2 * newH * newW + dstIdx] = pixels[srcIdx + 2] / 127.5 - 1.0;
+    }
+  }
+  return new ort.Tensor('float32', nchw, [1, 3, newH, newW]);
+}
+
+function ctcGreedyDecode(data, dims) {
+  const timeSteps = dims[1];
+  const vocabSize = dims[2];
+  let prev = 0;
+  let result = '';
+  for (let t = 0; t < timeSteps; t++) {
+    let bestIdx = 0;
+    let bestVal = -Infinity;
+    const offset = t * vocabSize;
+    for (let v = 0; v < vocabSize; v++) {
+      if (data[offset + v] > bestVal) {
+        bestVal = data[offset + v];
+        bestIdx = v;
+      }
+    }
+    if (bestIdx !== 0 && bestIdx !== prev) {
+      const ch = ocrChars[bestIdx];
+      if (ch) result += ch;
+    }
+    prev = bestIdx;
+  }
+  return result;
+}
+
+async function recognizePlate(imageData) {
+  if (!ocr || !ocrChars.length) return '';
+  const input = preprocessOCR(imageData);
+  const results = await ocr.run({ [ocr.inputNames[0]]: input });
+
+  let outData;
+  const out = results[ocr.outputNames[0]];
+  if (out.data instanceof Float32Array) {
+    outData = out.data;
+  } else {
+    outData = new Float32Array(out.data.length);
+    for (let i = 0; i < out.data.length; i++) outData[i] = out.data[i];
+  }
+  return ctcGreedyDecode(outData, out.dims);
+}
+
+let _yoloCounter = 0;
+const _yoloSkip = isMobile ? 3 : 2;
+let _lastGoodBox = null;
+let _goodBoxAge = 0;
+
+let _ocrCounter = 0;
+const _ocrSkipInterval = isMobile ? 2 : 3;
+let _lastBoxCenter = null;
+
+let _lastPlate = null;
+let _noDetectFrames = 0;
+const NO_DETECT_LIMIT = 20;
+
+let _smoothFallback = null;
+
 async function startCamera() {
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: { facingMode: 'environment', width: { ideal: isMobile ? 640 : 1280 }, height: { ideal: isMobile ? 480 : 720 } },
       audio: false,
     });
     document.getElementById('video').srcObject = mediaStream;
@@ -223,13 +393,24 @@ async function startCamera() {
 function setStatus(msg) { const el = document.getElementById('cam-status'); if (el) el.textContent = msg; }
 
 function stopCamera() {
-  if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
   isScanning = false;
+  _yoloCounter = 0;
+  _lastGoodBox = null;
+  _goodBoxAge = 0;
+  _ocrCounter = 0;
+  _lastBoxCenter = null;
+  _lastPlate = null;
+  _noDetectFrames = 0;
+  if (fallbackDetector) fallbackDetector.reset();
+  _smoothFallback = null;
+  plateWindow.length = 0;
   document.getElementById('scan-toggle').checked = false;
   document.getElementById('switch-label').textContent = 'Iniciar deteccion';
   document.getElementById('cam-status').classList.remove('scanning');
   if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
   setStatus('En espera');
+  hideOverlay();
 }
 
 window.toggleScan = async function () {
@@ -239,101 +420,133 @@ window.toggleScan = async function () {
   document.getElementById('switch-label').textContent = 'Apagar camara';
   document.getElementById('cam-status').classList.add('scanning');
   setStatus('Escaneando...');
-  await detect();
-  scanTimer = setInterval(detect, 2500);
+  _lastPlate = null;
+  _noDetectFrames = 0;
+  if (fallbackDetector) fallbackDetector.reset();
+  if (detector) _smoothFallback = null;
+  requestAnimationFrame(loop);
 };
 
-// =============================== DETECTION ===============================
-function captureFrame() {
-  const v = document.getElementById('video');
-  if (!v || !v.videoWidth) return null;
-  const c = document.createElement('canvas');
-  c.width = v.videoWidth; c.height = v.videoHeight;
-  c.getContext('2d').drawImage(v, 0, 0);
-  return c;
-}
-
-function crop(src, x, y, w, h) {
-  const c = document.createElement('canvas');
-  c.width = Math.max(40, Math.round(w)); c.height = Math.max(40, Math.round(h));
-  c.getContext('2d').drawImage(src, Math.round(x), Math.round(y), Math.round(w), Math.round(h), 0, 0, c.width, c.height);
-  return c;
-}
-
-async function detect() {
+async function loop() {
+  if (!isScanning) return;
   const video = document.getElementById('video');
-  if (!video || !video.videoWidth) return;
+  if (!video || !video.videoWidth) { rafId = requestAnimationFrame(loop); return; }
   updateFPS();
-  const frame = captureFrame();
-  if (!frame) return;
 
-  let plate = null;
-  const fw = frame.width, fh = frame.height;
-  const scanW = 240, scanH = 80;
+  let boxes = [];
+  _yoloCounter++;
+  const skip = (_yoloCounter % _yoloSkip !== 0) && _lastGoodBox && _goodBoxAge < 8;
 
-  for (let sy = 0; sy < 3 && !plate; sy++) {
-    for (let sx = 0; sx < 4 && !plate; sx++) {
-      const rx = fw * 0.15 + sx * (fw * 0.7 / 4);
-      const ry = fh * 0.25 + sy * (fh * 0.4 / 3);
-      setStatus('Buscando...');
-      try { plate = await readPlateInWorker(crop(frame, rx, ry, scanW, scanH)); } catch (e) {}
-      await tick();
+  if (skip) {
+    _goodBoxAge++;
+    if (_lastGoodBox) boxes = [{ ..._lastGoodBox }];
+  } else if (detector) {
+    try {
+      boxes = await detectPlate(video);
+      if (boxes.length > 0) {
+        _lastGoodBox = { ...boxes[0] };
+        _goodBoxAge = 0;
+      } else {
+        _goodBoxAge++;
+      }
+    } catch (e) { console.warn('YOLO error:', e); }
+  }
+
+  if (boxes.length === 0 && fallbackDetector) {
+    const fb = fallbackDetector.detect(video);
+    if (fb && fb.score > 0.3) {
+      if (_smoothFallback) {
+        const alpha = 0.35;
+        _smoothFallback.x1 += (fb.x1 - _smoothFallback.x1) * alpha;
+        _smoothFallback.y1 += (fb.y1 - _smoothFallback.y1) * alpha;
+        _smoothFallback.x2 += (fb.x2 - _smoothFallback.x2) * alpha;
+        _smoothFallback.y2 += (fb.y2 - _smoothFallback.y2) * alpha;
+        _smoothFallback.score = fb.score;
+      } else {
+        _smoothFallback = { x1: fb.x1, y1: fb.y1, x2: fb.x2, y2: fb.y2, score: fb.score };
+      }
+      boxes = [{ ..._smoothFallback }];
+    } else {
+      _smoothFallback = null;
     }
   }
 
-  let detectedBox = null;
-  if (!plate && litertReady) {
-    try {
-      setStatus('liteRT.js detectando...');
-      await tick();
-      const vehicles = await detectVehicles(video);
-      for (const v of vehicles) {
-        if (plate) break;
-        setStatus('Leyendo patente...');
-        detectedBox = v;
-        plate = await readPlateInWorker(crop(frame, v.x + v.w * 0.12, v.y + v.h * 0.5, v.w * 0.76, v.h * 0.35));
-        await tick();
+  drawOverlay(boxes);
+
+  if (boxes.length > 0) {
+    _noDetectFrames = 0;
+    const box = boxes[0];
+    const center = { x: (box.x1 + box.x2) / 2, y: (box.y1 + box.y2) / 2 };
+    const bw = box.x2 - box.x1, bh = box.y2 - box.y1;
+    const isStable = _lastBoxCenter &&
+      Math.abs(center.x - _lastBoxCenter.x) < bw * 0.15 &&
+      Math.abs(center.y - _lastBoxCenter.y) < bh * 0.15;
+    _lastBoxCenter = center;
+
+    _ocrCounter++;
+    const skipOCR = isStable && (_ocrCounter % _ocrSkipInterval !== 0);
+
+    if (!skipOCR) {
+      const crop = cropImageData(video, box);
+      if (crop) {
+        let rawText = '';
+        try {
+          rawText = await recognizePlate(crop);
+        } catch (e) { console.warn('OCR error:', e); }
+
+        if (rawText) {
+          const normalized = normalizePlate(rawText);
+          const corrected = corrector ? corrector.correct(normalized) : normalized;
+          if (validatePlate(corrected)) {
+            addToWindow(corrected);
+            const consensus = getConsensus();
+            if (consensus && consensus !== _lastPlate) {
+              _lastPlate = consensus;
+              processPlate(consensus);
+              plateWindow.length = 0;
+            } else if (!_lastPlate) {
+              showOverlay(corrected, 'warning', 'Confirmando...');
+            }
+          } else {
+            plateWindow.length = 0;
+          }
+        } else {
+          plateWindow.length = 0;
+        }
       }
-    } catch (e) { console.warn('liteRT error:', e); }
-  }
-
-  if (detectedBox) drawDetectionBox(detectedBox);
-
-  if (plate) {
-    const normalized = normalizeOCR(plate);
-    const corrected = correctPlate(normalized);
-    if (corrected) {
-      addToWindow(corrected);
-      const consensus = getConsensus();
-      if (consensus) { processPlate(consensus); plateWindow.length = 0; }
-      else showOverlay(corrected, 'warning', 'Confirmando...');
-    } else {
-      setStatus('Patente invalida: ' + plate);
-      plateWindow.length = 0;
     }
   } else {
-    setStatus('Sin deteccion');
-    hideOverlay();
+    _noDetectFrames++;
+    plateWindow.length = 0;
+    if (_noDetectFrames > NO_DETECT_LIMIT && _lastPlate) {
+      _lastPlate = null;
+      hideOverlay();
+    }
   }
+
+  rafId = requestAnimationFrame(loop);
 }
 
-function drawDetectionBox(v) {
-  const sf = document.getElementById('scan-frame');
-  if (!sf) return;
+function drawOverlay(boxes) {
+  const overlay = document.getElementById('scan-frame');
   const video = document.getElementById('video');
-  if (!video.videoWidth) return;
+  if (!overlay || !video.videoWidth) return;
+  if (boxes.length === 0) {
+    overlay.classList.remove('active');
+    overlay.style.left = overlay.style.top = overlay.style.width = overlay.style.height = '';
+    return;
+  }
+  const b = boxes[0];
   const scaleX = video.clientWidth / video.videoWidth;
   const scaleY = video.clientHeight / video.videoHeight;
-  sf.style.left = (v.x * scaleX) + 'px';
-  sf.style.top = (v.y * scaleY) + 'px';
-  sf.style.width = (v.w * scaleX) + 'px';
-  sf.style.height = (v.h * scaleY) + 'px';
-  sf.style.transform = 'none';
-  sf.classList.add('active');
-  setTimeout(() => {
-    sf.classList.remove('active');
-    sf.style.left = sf.style.top = sf.style.width = sf.style.height = sf.style.transform = '';
-  }, 1000);
+  const w = b.x2 - b.x1;
+  const h = b.y2 - b.y1;
+  overlay.style.left = (b.x1 * scaleX) + 'px';
+  overlay.style.top = (b.y1 * scaleY) + 'px';
+  overlay.style.width = (w * scaleX) + 'px';
+  overlay.style.height = (h * scaleY) + 'px';
+  overlay.style.borderColor = b.score > 0.5 ? '#00ff66' : '#ffcc00';
+  overlay.classList.add('active');
 }
 
 function showOverlay(plate, type, statusText) {
@@ -349,19 +562,6 @@ function showOverlay(plate, type, statusText) {
 function hideOverlay() {
   const el = document.getElementById('overlay-result');
   if (el) el.classList.add('hidden');
-}
-
-function correctPlate(raw) {
-  const c = { '0':'O','O':'0','1':'I','I':'1','2':'Z','Z':'2','5':'S','S':'5','8':'B','B':'8','6':'G','G':'6','4':'A','A':'4' };
-  if (PLATE_PATTERNS.some(p => p.test(raw))) return raw;
-  for (let i = 0; i < raw.length; i++) {
-    if (!c[raw[i]]) continue;
-    for (const r of c[raw[i]]) {
-      const t = raw.slice(0, i) + r + raw.slice(i + 1);
-      if (PLATE_PATTERNS.some(p => p.test(t))) return t;
-    }
-  }
-  return null;
 }
 
 function processPlate(plate) {
@@ -409,7 +609,6 @@ function updateStats() {
   document.getElementById('stat-unknown').textContent = scanCount.unknown;
 }
 
-// =============================== UI ===============================
 window.navigate = function (view) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -462,19 +661,18 @@ function showToast(msg, type) {
   el._timer = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
-// =============================== INIT ===============================
 document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('btn-home-scan').onclick = () => window.navigate('camera');
   document.getElementById('scan-toggle').onchange = window.toggleScan;
   document.getElementById('btn-send-whatsapp').onclick = window.sendWhatsApp;
   document.getElementById('btn-add-contact').onclick = window.addContact;
   document.querySelectorAll('.nav-item[data-view]').forEach(n => {
-    n.onclick = () => { window.navigate(n.dataset.view); if (n.dataset.view === 'camera') initLiteRT(); };
+    n.onclick = () => { window.navigate(n.dataset.view); if (n.dataset.view === 'camera') initModels(); };
   });
   document.getElementById('cam-result').onclick = function () {
     const txt = document.getElementById('result-plate').textContent;
     if (txt !== '---') { document.getElementById('reg-plate').value = txt; window.navigate('register'); }
   };
-  updateStats(); updateHistory(); renderContacts(); initLiteRT(); initWorker(); initDB();
+  updateStats(); updateHistory(); renderContacts(); initDB(); initModels();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 });

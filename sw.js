@@ -1,12 +1,17 @@
-const CACHE = 'platedetect-v3';
+const CACHE = 'platedetect-v4';
 const BASE = (self.location.pathname.replace(/\/sw\.js$/, '') || '/') + '/';
 const ASSETS = [
   BASE,
   BASE + 'index.html',
   BASE + 'style.css',
   BASE + 'app.js',
-  BASE + 'ocr-worker.js',
+  BASE + 'validator.js',
+  BASE + 'corrector.js',
+  BASE + 'fallback.js',
   BASE + 'manifest.json',
+  BASE + 'models/yolov8_plate.onnx',
+  BASE + 'models/ppocr_rec.onnx',
+  BASE + 'models/ppocr_keys.json',
 ];
 
 self.addEventListener('install', e => {
@@ -33,7 +38,7 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
-  const isCDN = url.href.includes('litertjs') || url.href.includes('wasm') || url.href.includes('storage.googleapis.com');
+  const isCDN = url.href.includes('onnxruntime') || url.href.includes('jsdelivr') || url.href.includes('wasm');
 
   if (isCDN) {
     e.respondWith(
