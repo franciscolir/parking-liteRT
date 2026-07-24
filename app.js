@@ -93,7 +93,7 @@ async function initModels() {
   setStatus('Cargando modelos...');
   detectGPU();
 
-  const ep = useGPU ? ['webgpu', 'webgl', 'wasm'] : ['webgl', 'wasm'];
+  const ep = ['webgl', 'wasm'];
 
   try {
     corrector = new Corrector();
