@@ -10,10 +10,15 @@ const DB = {
 };
 const DEFAULT_CONTACTS = [
   { name: 'Policia', phone: '911', type: 'police', icon: '\u{1F6A8}' },
-  { name: 'Emergencias', phone: '107', type: 'emergency', icon: '\u{1F691}' },
   { name: 'Bomberos', phone: '100', type: 'fire', icon: '\u{1F525}' },
-  { name: 'Hospital', phone: '108', type: 'hospital', icon: '\u{1F3E5}' },
+  { name: 'Emergencia Medica', phone: '107', type: 'emergency', icon: '\u{1F691}' },
+  { name: 'Oficina', phone: '', type: 'office', icon: '\u{1F3E2}' },
 ];
+
+function getOfficePhone() {
+  const c = contacts.find(c => c.type === 'office' || c.name === 'Oficina');
+  return c && c.phone ? c.phone : '';
+}
 
 let scanHistory = JSON.parse(localStorage.getItem('plateHistory') || '[]');
 let scanCount = JSON.parse(localStorage.getItem('plateStats') || '{"total":0,"registered":0,"stolen":0,"unknown":0}');
@@ -265,7 +270,6 @@ function stopCamera() {
   document.getElementById('switch-label').textContent = 'Iniciar deteccion';
   document.getElementById('cam-status').classList.remove('scanning');
   document.getElementById('cam-container').classList.remove('scanning');
-  hideOverlay();
   clearCanvasOverlay();
   setStatus('En espera');
 }
@@ -364,7 +368,6 @@ async function loop() {
     streakCandidate = null; streakCount = 0;
     if (noDetectFrames > noDetectLimit && lastPlate) {
       lastPlate = null; lastPlateBox = null;
-      hideOverlay();
     }
   }
 
@@ -439,21 +442,6 @@ function formatPlate(p) {
   return p;
 }
 
-function showOverlay(plate, type, statusText) {
-  const el = document.getElementById('overlay-result');
-  if (!el) return;
-  el.classList.remove('hidden');
-  document.getElementById('overlay-plate').textContent = plate;
-  const st = document.getElementById('overlay-status');
-  st.className = 'overlay-status ' + type;
-  st.textContent = statusText;
-}
-
-function hideOverlay() {
-  const el = document.getElementById('overlay-result');
-  if (el) el.classList.add('hidden');
-}
-
 function processPlate(plate) {
   setStatus('Patente: ' + plate);
   const result = document.getElementById('cam-result');
@@ -474,7 +462,14 @@ function processPlate(plate) {
   result.className = 'camera-result ' + css;
   document.getElementById('result-icon').textContent = ico;
   document.getElementById('result-status').textContent = st;
-  showOverlay(plate, css, st.replace(/[\u26A0\u2713]/g, '').trim());
+
+  const inner = result.querySelector('.result-card-inner');
+  if (inner) {
+    inner.classList.remove('flash');
+    void inner.offsetWidth;
+    inner.classList.add('flash');
+  }
+
   updateHistory();
   if (navigator.vibrate) navigator.vibrate(100);
   document.getElementById('reg-plate').value = plate;
@@ -487,9 +482,33 @@ function updateHistory() {
   list.innerHTML = scanHistory.slice(0, 10).map(h => {
     const sc = h.status === 'success' ? 'reg' : h.status === 'danger' ? 'stolen' : 'unk';
     const st = h.status === 'success' ? 'Registrada' : h.status === 'danger' ? 'Denunciada' : 'Desconocida';
-    return '<div class="history-item"><span class="h-plate">' + h.plate + '</span><span class="h-status ' + sc + '">' + st + '</span></div>';
+    const isReg = DB.registered.includes(h.plate);
+    const clickHandler = isReg ? '' : ' onclick="requestRegistration(\'' + h.plate + '\')"';
+    const cls = isReg ? '' : ' clickable';
+    return '<div class="history-item' + cls + '"' + clickHandler + '><span class="h-plate">' + h.plate + '</span><span class="h-status ' + sc + '">' + st + '</span></div>';
   }).join('');
 }
+
+window.requestRegistration = function (plate) {
+  document.getElementById('modal-plate').value = plate;
+  document.getElementById('modal-name').value = '';
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  setTimeout(() => document.getElementById('modal-name').focus(), 100);
+};
+
+window.closeModal = function () {
+  document.getElementById('modal-overlay').classList.add('hidden');
+};
+
+window.sendRegistration = function () {
+  const plate = document.getElementById('modal-plate').value.trim();
+  const name = document.getElementById('modal-name').value.trim();
+  if (!name) { showToast('Ingrese el nombre del conductor', 'error'); return; }
+  const msg = ['\u{1F4CB} *SOLICITUD DE REGISTRO*', '', '*Patente:* ' + plate.toUpperCase(), '*Nombre:* ' + name, '', 'Enviado desde PlateDetect'].join('\n');
+  const office = getOfficePhone();
+  window.open('https://wa.me/' + (office ? office : '') + '?text=' + encodeURIComponent(msg), '_blank');
+  closeModal();
+};
 
 window.navigate = function (view) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -513,7 +532,8 @@ window.sendWhatsApp = function () {
   const d = document.getElementById('reg-desc').value.trim();
   if (!p || !v || !i) { showToast('Complete patente, vehiculo e incidente', 'error'); return; }
   const msg = ['\u{1F6A8} *REPORTE DE INCIDENTE*', '', '*Patente:* ' + p.toUpperCase(), '*Vehiculo:* ' + v, '*Incidente:* ' + i, l ? '*Ubicacion:* ' + l : '', d ? '*Descripcion:* ' + d : '', '', 'Enviado desde PlateDetect'].filter(Boolean).join('\n');
-  window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+  const office = getOfficePhone();
+  window.open('https://wa.me/' + (office ? office : '') + '?text=' + encodeURIComponent(msg), '_blank');
 };
 
 function renderContacts() {
@@ -559,6 +579,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const txt = document.getElementById('result-plate').textContent;
     if (txt !== '---') { document.getElementById('reg-plate').value = txt; window.navigate('register'); }
   };
+  document.getElementById('modal-cancel').onclick = window.closeModal;
+  document.getElementById('modal-send').onclick = window.sendRegistration;
+  document.getElementById('modal-overlay').onclick = function (e) { if (e.target === this) window.closeModal(); };
   updateHistory(); renderContacts(); initDB(); initModels(); runDiagnostics();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 });

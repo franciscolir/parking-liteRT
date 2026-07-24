@@ -66,10 +66,6 @@
         <span class="hud-fps" id="hud-fps">FPS 0</span>
         <span class="hud-gpu" id="hud-gpu">CPU</span>
       </div>
-      <div class="cam-overlay-result hidden" id="overlay-result">
-        <div class="overlay-plate" id="overlay-plate">---</div>
-        <div class="overlay-status" id="overlay-status">Esperando...</div>
-      </div>
     </div>
   </div>
   <div class="camera-controls">
@@ -159,6 +155,25 @@
 
 <!-- =============== TOAST =============== -->
 <div class="toast" id="toast"></div>
+
+<!-- =============== MODAL REGISTRO RAPIDO =============== -->
+<div class="modal-overlay hidden" id="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">Solicitar registro</div>
+    <div class="form-group">
+      <label>Patente</label>
+      <input type="text" id="modal-plate" readonly class="input-plate">
+    </div>
+    <div class="form-group">
+      <label>Nombre del conductor / propietario</label>
+      <input type="text" id="modal-name" placeholder="Ej: Juan Perez" autocomplete="off">
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary btn-half" id="modal-cancel">Cancelar</button>
+      <button class="btn-whatsapp btn-half" id="modal-send">Enviar por WhatsApp</button>
+    </div>
+  </div>
+</div>
 
 <!-- =============== BOTTOM NAV =============== -->
 <nav class="bottom-nav">

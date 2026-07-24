@@ -329,40 +329,6 @@ html, body {
 }
 .hud-gpu { color: #4ecdc4; }
 
-.cam-overlay-result {
-  position: absolute;
-  bottom: 8%;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 6;
-  padding: 10px 24px;
-  border-radius: 12px;
-  background: rgba(0, 0, 0, .7);
-  backdrop-filter: blur(8px);
-  text-align: center;
-  min-width: 180px;
-  transition: opacity .2s, transform .2s;
-}
-.cam-overlay-result.hidden { opacity: 0; transform: translateX(-50%) translateY(8px); pointer-events: none; }
-
-.overlay-plate {
-  font-size: 26px;
-  font-weight: 800;
-  letter-spacing: 3px;
-  color: #fff;
-  text-shadow: 0 2px 8px rgba(0,0,0,.5);
-}
-.overlay-status {
-  font-size: 12px;
-  font-weight: 600;
-  margin-top: 2px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-.overlay-status.success { color: var(--success); }
-.overlay-status.danger { color: var(--danger); }
-.overlay-status.warning { color: var(--warning); }
-
 .scan-frame {
   position: absolute;
   top: 50%;
@@ -422,6 +388,9 @@ html, body {
 }
 
 /* ============================ TOGGLE SWITCH ============================ */
+.camera-controls {
+  margin-bottom: 20px;
+}
 .switch-container {
   display: flex;
   align-items: center;
@@ -521,6 +490,21 @@ html, body {
 .camera-result.danger .plate-number { color: var(--danger); }
 .camera-result.warning .plate-number { color: var(--warning); }
 
+/* destello al detectar patente */
+@keyframes flashPulse {
+  0% { box-shadow: 0 0 0 0 rgba(255,255,255,.6); }
+  100% { box-shadow: 0 0 0 24px rgba(255,255,255,0); }
+}
+.camera-result.success .result-card-inner.flash {
+  animation: flashPulse .6s ease-out;
+  box-shadow: 0 0 0 0 rgba(34,197,94,.6);
+}
+.camera-result.danger .result-card-inner.flash,
+.camera-result.warning .result-card-inner.flash {
+  animation: flashPulse .6s ease-out;
+  box-shadow: 0 0 0 0 rgba(239,68,68,.6);
+}
+
 .camera-history { margin: 0 16px 12px; }
 
 .camera-history h3 {
@@ -541,7 +525,10 @@ html, body {
   margin-bottom: 6px;
   font-size: 13px;
   border: 1px solid rgba(255, 255, 255, .04);
+  transition: background .15s;
 }
+.history-item.clickable { cursor: pointer; }
+.history-item.clickable:active { background: var(--surface); }
 
 .history-item .h-plate { font-weight: 700; letter-spacing: 1px; }
 
@@ -669,6 +656,7 @@ html, body {
 .contact-card .avatar.fire { background: rgba(245, 158, 11, .2); color: var(--warning); }
 .contact-card .avatar.hospital { background: rgba(34, 197, 94, .2); color: var(--success); }
 .contact-card .avatar.custom { background: rgba(6, 182, 212, .2); color: var(--accent); }
+.contact-card .avatar.office { background: rgba(59, 130, 246, .2); color: var(--primary); }
 
 .contact-card .info { flex: 1; }
 .contact-card .info .name { font-size: 15px; font-weight: 600; }
@@ -881,6 +869,41 @@ html, body {
   margin-top: 3px;
   font-weight: 500;
 }
+
+/* ============================ MODAL REGISTRO RAPIDO ============================ */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(0,0,0,.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  transition: opacity .2s;
+}
+.modal-overlay.hidden { display: none; }
+.modal-box {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 100%;
+  max-width: 360px;
+  border: 1px solid rgba(255,255,255,.1);
+  box-shadow: 0 8px 40px rgba(0,0,0,.5);
+}
+.modal-header {
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 16px;
+  color: var(--text);
+}
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+.btn-half { flex: 1; margin: 0 !important; width: auto !important; }
 
 /* ============================ SEARCH BOX ============================ */
 .search-box {
