@@ -76,93 +76,102 @@ function updateFPS() {
 
 function runDiagnostics() {
   const list = document.getElementById('check-list');
+  const summary = document.getElementById('check-summary');
   if (!list) return;
 
-  let html = '';
-  let hasIssues = false;
+  const items = { device: [], browser: [], models: [] };
+  let errors = 0;
+  let warnings = 0;
 
   // ---- Dispositivo ----
-  html += '<div class="check-section"><div class="check-section-title">Dispositivo</div>';
-
-  // Memoria
-  const mem = navigator.deviceMemory !== undefined ? navigator.deviceMemory : null;
-  if (mem !== null) {
-    if (mem < 2) { html += '<div class="check-item"><div class="check-item-icon err">&#33;</div><div class="check-item-text"><div class="check-item-label">Memoria insuficiente</div><div class="check-item-detail">Detectado ' + mem + ' GB. Se recomienda minimo 2 GB.</div></div></div>'; hasIssues = true; }
-    else if (mem < 4) { html += '<div class="check-item"><div class="check-item-icon warn">&#9888;</div><div class="check-item-text"><div class="check-item-label">Memoria limitada</div><div class="check-item-detail">' + mem + ' GB. Podria ser lento.</div></div></div>'; }
-    else { html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Memoria ' + mem + ' GB</div></div></div>'; }
-  } else {
-    html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Dispositivo compatible</div></div></div>';
+  const mem = navigator.deviceMemory;
+  if (mem !== undefined) {
+    if (mem < 2) { items.device.push({ icon: 'err', label: 'Memoria insuficiente', detail: mem + ' GB. Se recomienda minimo 2 GB.', fix: 'Cierra otras apps.' }); errors++; }
+    else if (mem < 4) { items.device.push({ icon: 'warn', label: 'Memoria limitada', detail: mem + ' GB. Podria ser lento.' }); warnings++; }
+    else { items.device.push({ icon: 'ok', label: 'Memoria ' + mem + ' GB' }); }
   }
-
-  // CPU cores
-  const cpu = navigator.hardwareConcurrency || null;
-  if (cpu !== null) {
-    if (cpu < 4) { html += '<div class="check-item"><div class="check-item-icon warn">&#9888;</div><div class="check-item-text"><div class="check-item-label">Procesador de ' + cpu + ' nucleos</div><div class="check-item-detail">La deteccion sera mas lenta.</div></div></div>'; }
-    else { html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Procesador ' + cpu + ' nucleos</div></div></div>'; }
+  const cpu = navigator.hardwareConcurrency;
+  if (cpu) {
+    if (cpu < 4) { items.device.push({ icon: 'warn', label: 'Procesador ' + cpu + ' nucleos', detail: 'Deteccion mas lenta.' }); warnings++; }
+    else { items.device.push({ icon: 'ok', label: 'Procesador ' + cpu + ' nucleos' }); }
   }
-
-  // Movil o escritorio
-  html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Modo ' + (isMobile ? 'MOVIL' : 'ESCRITORIO') + '</div></div>';
-  html += '</div>';
+  items.device.push({ icon: 'ok', label: 'Modo ' + (isMobile ? 'MOVIL' : 'ESCRITORIO') });
 
   // ---- Navegador ----
-  html += '<div class="check-section"><div class="check-section-title">Navegador</div>';
-
-  // Camara
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    html += '<div class="check-item"><div class="check-item-icon err">&#33;</div><div class="check-item-text"><div class="check-item-label">Camara no soportada</div><div class="check-item-detail">Usa Chrome o Safari reciente.</div><div class="check-item-fix">Actualiza tu navegador.</div></div></div>';
-    hasIssues = true;
+    items.browser.push({ icon: 'err', label: 'Camara no soportada', fix: 'Usa Chrome o Safari reciente.' }); errors++;
   } else {
-    html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Camara disponible</div></div>';
+    items.browser.push({ icon: 'ok', label: 'Camara disponible' });
   }
-
-  // WebGL
   let webglOk = false;
   try { webglOk = !!document.createElement('canvas').getContext('webgl'); } catch (e) {}
-  if (webglOk) {
-    html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Aceleracion grafica (WebGL)</div></div>';
-  } else {
-    html += '<div class="check-item"><div class="check-item-icon warn">&#9888;</div><div class="check-item-text"><div class="check-item-label">Sin aceleracion grafica</div><div class="check-item-detail">Los modelos usaran CPU, mas lento.</div></div>';
-  }
-
-  // WASM
+  if (webglOk) { items.browser.push({ icon: 'ok', label: 'Aceleracion grafica (WebGL)' }); }
+  else { items.browser.push({ icon: 'warn', label: 'Sin aceleracion grafica', detail: 'Usara CPU, mas lento.' }); warnings++; }
   const wasmOk = typeof WebAssembly === 'object' && typeof WebAssembly.instantiate === 'function';
-  if (wasmOk) {
-    html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">WebAssembly</div></div>';
-  } else {
-    html += '<div class="check-item"><div class="check-item-icon err">&#33;</div><div class="check-item-text"><div class="check-item-label">WebAssembly no soportado</div><div class="check-item-detail">Necesario para los modelos IA.</div><div class="check-item-fix">Actualiza tu navegador.</div></div>';
-    hasIssues = true;
-  }
-
-  // HTTPS
+  if (wasmOk) { items.browser.push({ icon: 'ok', label: 'WebAssembly' }); }
+  else { items.browser.push({ icon: 'err', label: 'WebAssembly no soportado', fix: 'Actualiza tu navegador.' }); errors++; }
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-    html += '<div class="check-item"><div class="check-item-icon err">&#33;</div><div class="check-item-text"><div class="check-item-label">Conexion no segura (HTTP)</div><div class="check-item-detail">La camara requiere HTTPS.</div><div class="check-item-fix">Usa HTTPS.</div></div>';
-    hasIssues = true;
+    items.browser.push({ icon: 'err', label: 'Conexion no segura', detail: 'La camara requiere HTTPS.', fix: 'Usa HTTPS.' }); errors++;
   }
-  html += '</div>';
 
   // ---- Modelos IA ----
-  html += '<div class="check-section"><div class="check-section-title">Modelos de IA</div>';
+  if (detector && !detector.mock) { items.models.push({ icon: 'ok', label: 'Detector YOLOv8 activo' }); }
+  else { items.models.push({ icon: 'warn', label: 'Detector cargando...' }); warnings++; }
+  if (ocr && !ocr.mock) { items.models.push({ icon: 'ok', label: 'OCR PP-OCRv4 activo' }); }
+  else { items.models.push({ icon: 'warn', label: 'OCR cargando...' }); warnings++; }
 
-  if (!detector || detector.mock) {
-    html += '<div class="check-item"><div class="check-item-icon ' + (detector ? 'warn' : 'warn') + '">&#9888;</div><div class="check-item-text"><div class="check-item-label">Detector no cargado</div><div class="check-item-detail">Modelo YOLOv8</div></div>';
-  } else {
-    html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Detector YOLOv8 activo</div></div>';
+  // ---- Resumen (1 linea) ----
+  if (summary) {
+    if (errors > 0) summary.innerHTML = '&#9888;&#65039; ' + errors + ' problema' + (errors > 1 ? 's' : '') + ' detectado' + (errors > 1 ? 's' : '');
+    else if (warnings > 0) summary.innerHTML = '&#9888;&#65039; ' + warnings + ' aviso' + (warnings > 1 ? 's' : '');
+    else if (detector && !detector.mock && ocr && !ocr.mock) summary.innerHTML = '&#9989; Todo listo para escanear';
+    else summary.innerHTML = '&#8987; Cargando...';
   }
 
-  if (!ocr || ocr.mock) {
-    html += '<div class="check-item"><div class="check-item-icon warn">&#9888;</div><div class="check-item-text"><div class="check-item-label">OCR no cargado</div><div class="check-item-detail">Modelo PP-OCRv4</div></div>';
-  } else {
-    html += '<div class="check-item"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">OCR PP-OCRv4 activo</div></div>';
+  // ---- HTML colapsable ----
+  const sections = [
+    { title: 'Dispositivo', items: items.device },
+    { title: 'Navegador', items: items.browser },
+    { title: 'Modelos de IA', items: items.models },
+  ];
+  let html = '';
+  for (const s of sections) {
+    let sectionErrors = 0;
+    for (const it of s.items) { if (it.icon === 'err') sectionErrors++; }
+    const badge = sectionErrors > 0 ? '<span class="check-section-badge err">' + sectionErrors + '</span>' : '';
+    html += '<div class="check-acc" data-section="' + s.title + '">';
+    html += '<button class="check-acc-header"><span>' + s.title + '</span>' + badge + '<svg class="check-acc-arrow" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>';
+    html += '<div class="check-acc-body">';
+    for (const it of s.items) {
+      const iconSvg = it.icon === 'ok' ? '&#10003;' : it.icon === 'warn' ? '&#9888;' : '&#33;';
+      html += '<div class="check-item"><div class="check-item-icon ' + it.icon + '">' + iconSvg + '</div><div class="check-item-text">';
+      html += '<div class="check-item-label">' + it.label + '</div>';
+      if (it.detail) html += '<div class="check-item-detail">' + it.detail + '</div>';
+      if (it.fix) html += '<div class="check-item-fix">' + it.fix + '</div>';
+      html += '</div></div>';
+    }
+    html += '</div></div>';
   }
-  html += '</div>';
-
-  // ---- Resumen ----
-  if (!hasIssues && detector && !detector.mock && ocr && !ocr.mock) {
-    html = '<div class="check-item" style="margin-bottom:14px"><div class="check-item-icon ok">&#10003;</div><div class="check-item-text"><div class="check-item-label">Todo listo para escanear</div></div></div>' + html;
-  }
-
   list.innerHTML = html;
+
+  // Eventos acordeon principal
+  const toggle = document.getElementById('check-toggle');
+  const body = document.getElementById('check-body-outer');
+  if (toggle && body) {
+    toggle.onclick = () => {
+      toggle.classList.toggle('open');
+      body.classList.toggle('open');
+    };
+  }
+  // Eventos sub-secciones
+  list.querySelectorAll('.check-acc-header').forEach(h => {
+    h.onclick = () => {
+      const acc = h.parentElement;
+      h.classList.toggle('open');
+      const b = acc.querySelector('.check-acc-body');
+      if (b) b.classList.toggle('open');
+    };
+  });
 }
 
 function renderPlatesTable(filter) {

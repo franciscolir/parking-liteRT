@@ -26,9 +26,14 @@
   <button class="btn-primary" id="btn-home-scan">Iniciar escaneo</button>
   <button class="btn-secondary" id="btn-home-plates">Ver patentes registradas</button>
 
-  <div class="card check-card">
-    <div class="check-card-title">&#9989; Estado del sistema</div>
-    <div id="check-list"></div>
+  <div class="card check-card" id="check-accordion">
+    <button class="check-header" id="check-toggle">
+      <span id="check-summary">&#9989; Sistema listo</span>
+      <svg class="check-arrow" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="check-body" id="check-body-outer">
+      <div id="check-list"></div>
+    </div>
   </div>
 
   <div style="height:16px"></div>

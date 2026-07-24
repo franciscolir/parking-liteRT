@@ -764,26 +764,87 @@ html, body {
   background: var(--card);
   border: 1px solid rgba(255,255,255,.06);
 }
-.check-card-title {
+.check-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text);
   font-size: 15px;
   font-weight: 600;
-  margin-bottom: 12px;
-  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
 }
-.check-section {
-  margin-bottom: 14px;
+.check-header:active { color: var(--text-muted); }
+.check-arrow {
+  width: 20px;
+  height: 20px;
+  stroke: var(--text-muted);
+  fill: none;
+  stroke-width: 2;
+  flex-shrink: 0;
+  transition: transform .25s;
 }
-.check-section:last-child { margin-bottom: 0; }
-.check-section-title {
-  font-size: 11px;
-  font-weight: 600;
+.check-header.open .check-arrow { transform: rotate(180deg); }
+
+.check-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .3s ease;
+}
+.check-body.open { max-height: 700px; }
+
+.check-acc {
+  border-top: 1px solid rgba(255,255,255,.05);
+}
+.check-acc:first-child { border-top: none; }
+.check-acc-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
   color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: .5px;
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid rgba(255,255,255,.05);
+  font-family: inherit;
+  cursor: pointer;
+  padding: 10px 0;
+  text-align: left;
 }
+.check-acc-header span:first-child { flex: 1; }
+.check-acc-header:active { color: var(--text); }
+.check-acc-arrow {
+  width: 16px;
+  height: 16px;
+  stroke: var(--text-muted);
+  fill: none;
+  stroke-width: 2;
+  flex-shrink: 0;
+  transition: transform .25s;
+}
+.check-acc-header.open .check-acc-arrow { transform: rotate(180deg); }
+.check-section-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(239,68,68,.2);
+  color: var(--danger);
+}
+.check-acc-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .25s ease;
+}
+.check-acc-body.open { max-height: 400px; }
 .check-item {
   display: flex;
   align-items: flex-start;
