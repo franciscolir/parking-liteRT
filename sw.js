@@ -1,4 +1,4 @@
-const CACHE = 'platedetect-v4';
+const CACHE = 'platedetect-v5';
 const BASE = (self.location.pathname.replace(/\/sw\.js$/, '') || '/') + '/';
 const ASSETS = [
   BASE,
@@ -7,7 +7,9 @@ const ASSETS = [
   BASE + 'app.js',
   BASE + 'validator.js',
   BASE + 'corrector.js',
-  BASE + 'fallback.js',
+  BASE + 'camera.js',
+  BASE + 'detector.js',
+  BASE + 'ocr.js',
   BASE + 'manifest.json',
   BASE + 'models/yolov8_plate.onnx',
   BASE + 'models/ppocr_rec.onnx',

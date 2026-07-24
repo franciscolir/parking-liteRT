@@ -1,7 +1,8 @@
-import * as ort from 'onnxruntime-web';
+import { Camera } from './camera.js';
+import { PlateDetector } from './detector.js';
+import { PlateOCR } from './ocr.js';
 import { validatePlate, normalizePlate } from './validator.js';
 import { Corrector } from './corrector.js';
-import { FallbackDetector } from './fallback.js';
 
 const DB = {
   registered: ['ABC123', 'DEF456', 'GHI789', 'JKL012', 'MNO345', 'PQR678', 'STU901', 'BBBB10'],
@@ -18,44 +19,31 @@ let scanHistory = JSON.parse(localStorage.getItem('plateHistory') || '[]');
 let scanCount = JSON.parse(localStorage.getItem('plateStats') || '{"total":0,"registered":0,"stolen":0,"unknown":0}');
 let contacts = JSON.parse(localStorage.getItem('contacts') || '[]');
 if (!contacts.length) contacts = JSON.parse(JSON.stringify(DEFAULT_CONTACTS));
-let mediaStream = null, isScanning = false, rafId = null;
-let detector = null, ocr = null, corrector = null, fallbackDetector = null;
-let ocrChars = [];
+
+let camera, detector, ocr, corrector;
+let running = false;
+let rafId = null;
+let lastPlate = null;
+let lastPlateBox = null;
+let noDetectFrames = 0;
+let frameCount = 0;
+let lastFpsTime = performance.now();
+let streakCandidate = null;
+let streakCount = 0;
+let streakRequired = 2;
+let noDetectLimit = 20;
+
+let lastRawText = '';
+let lastCorrected = '';
+let lastOCRValid = false;
+
+let ocrCounter = 0;
+let ocrSkipInterval = 3;
+let lastBoxCenter = null;
 
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-const plateWindow = [];
-const WINDOW_SIZE = 5;
-
-function addToWindow(plate) {
-  plateWindow.push(plate);
-  if (plateWindow.length > WINDOW_SIZE) plateWindow.shift();
-}
-
-function getConsensus() {
-  if (plateWindow.length < 3) return null;
-  const counts = {};
-  for (const p of plateWindow) counts[p] = (counts[p] || 0) + 1;
-  let best = null, max = 0;
-  for (const [p, c] of Object.entries(counts)) { if (c > max) { max = c; best = p; } }
-  return max >= 3 ? best : null;
-}
-
-let fpsFrames = 0, fpsLastTime = performance.now();
-function updateFPS() {
-  fpsFrames++;
-  const now = performance.now();
-  if (now - fpsLastTime >= 1000) {
-    const fps = Math.round(fpsFrames * 1000 / (now - fpsLastTime));
-    const el = document.getElementById('hud-fps');
-    if (el) el.textContent = 'FPS ' + fps;
-    fpsFrames = 0;
-    fpsLastTime = now;
-  }
-}
-
 let idb = null;
-
 function initDB() {
   return new Promise(resolve => {
     if (!indexedDB) { resolve(null); return; }
@@ -68,324 +56,63 @@ function initDB() {
     };
   });
 }
-
 function saveIDB(value) {
   if (!idb) return;
   const tx = idb.transaction('history', 'readwrite');
   tx.objectStore('history').put(value);
 }
 
-async function fetchArrayBuffer(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('Fetch ' + url + ' ' + res.status);
-  return await res.arrayBuffer();
-}
-
-let useGPU = false;
-
-function detectGPU() {
-  useGPU = !!navigator.gpu;
-  const hud = document.getElementById('hud-gpu');
-  if (hud) hud.textContent = useGPU ? 'GPU' : 'CPU';
+function updateFPS() {
+  frameCount++;
+  const now = performance.now();
+  if (now - lastFpsTime >= 1000) {
+    const fps = Math.round(frameCount * 1000 / (now - lastFpsTime));
+    const el = document.getElementById('hud-fps');
+    if (el) el.textContent = 'FPS ' + fps;
+    frameCount = 0;
+    lastFpsTime = now;
+  }
 }
 
 async function initModels() {
   setStatus('Cargando modelos...');
-  detectGPU();
+  const hud = document.getElementById('hud-gpu');
+  if (hud) hud.textContent = isMobile ? 'MOVIL' : 'DESK';
 
-  const ep = ['webgl', 'wasm'];
+  corrector = new Corrector();
+  detector = new PlateDetector({ inputSize: 640, confThreshold: 0.15 });
+  if (isMobile) detector._yoloSkip = 3;
+  ocr = new PlateOCR();
+  if (isMobile) ocrSkipInterval = 2;
 
+  setStatus('Cargando detector YOLOv8...');
+  const detBuf = await fetch('models/yolov8_plate.onnx').then(r => r.arrayBuffer());
+  const detLoaded = await detector.loadModel(detBuf);
+
+  setStatus('Cargando OCR PP-OCRv4...');
+  const ocrLoaded = await ocr.loadModel('models/ppocr_rec.onnx', 'models/ppocr_keys.json');
+
+  setStatus('Calentando modelos...');
   try {
-    corrector = new Corrector();
-    fallbackDetector = new FallbackDetector();
+    await Promise.race([
+      Promise.all([detector.warmup(), ocr.warmup()]),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
+    ]);
+  } catch (e) { console.warn('warmup skip:', e.message); }
 
-    setStatus('Cargando detector YOLOv8...');
-    const detBuf = await fetchArrayBuffer('models/yolov8_plate.onnx');
-    detector = await ort.InferenceSession.create(detBuf, { executionProviders: ep });
-
-    setStatus('Cargando OCR PP-OCRv4...');
-    const ocrBuf = await fetchArrayBuffer('models/ppocr_rec.onnx');
-    ocr = await ort.InferenceSession.create(ocrBuf, { executionProviders: ep });
-
-    const resp = await fetch('models/ppocr_keys.json');
-    ocrChars = await resp.json();
-
-    setStatus('Calentando modelos...');
-    try {
-      await Promise.race([
-        Promise.all([warmupDetector(), warmupOCR()]),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
-      ]);
-    } catch (e) { console.warn('warmup skip:', e.message); }
-
-    setStatus('Modelos listos');
-    console.log('YOLO inputs:', detector.inputNames, 'outputs:', detector.outputNames);
-    console.log('OCR inputs:', ocr.inputNames, 'outputs:', ocr.outputNames);
-  } catch (e) {
-    console.error('initModels error:', e);
-    setStatus('Error: ' + e.message);
-  }
+  if (detLoaded && ocrLoaded) setStatus('Listo. Presiona Iniciar');
+  else setStatus('Modo demo - faltan modelos');
+  console.log('Detector:', detLoaded ? 'OK' : 'FAIL', 'OCR:', ocrLoaded ? 'OK' : 'FAIL');
 }
-
-async function warmupDetector() {
-  if (!detector) return;
-  const sz = 640;
-  const dummy = new ort.Tensor('float32', new Float32Array(3 * sz * sz), [1, 3, sz, sz]);
-  await detector.run({ [detector.inputNames[0]]: dummy });
-}
-
-async function warmupOCR() {
-  if (!ocr) return;
-  const w = 100, h = 48;
-  const dummy = new ort.Tensor('float32', new Float32Array(3 * h * w), [1, 3, h, w]);
-  await ocr.run({ [ocr.inputNames[0]]: dummy });
-}
-
-let _detCanvas = null;
-let _detCtx = null;
-let _detTransform = null;
-
-function preprocessDetector(video) {
-  const vw = video.videoWidth || video.width || 0;
-  const vh = video.videoHeight || video.height || 0;
-  const sz = 640;
-  const maxSize = Math.max(vw, vh);
-  const scale = sz / maxSize;
-  const ox = (sz - vw * scale) / 2;
-  const oy = (sz - vh * scale) / 2;
-  _detTransform = { scale, ox, oy, vw, vh };
-
-  if (!_detCanvas) {
-    _detCanvas = document.createElement('canvas');
-    _detCtx = _detCanvas.getContext('2d', { willReadFrequently: true });
-  }
-  _detCanvas.width = sz;
-  _detCanvas.height = sz;
-  _detCtx.fillStyle = '#000';
-  _detCtx.fillRect(0, 0, sz, sz);
-  _detCtx.drawImage(video, ox, oy, vw * scale, vh * scale);
-
-  const rgba = _detCtx.getImageData(0, 0, sz, sz).data;
-  const ch = sz * sz;
-  const data = new Float32Array(3 * ch);
-  for (let i = 0; i < ch; i++) {
-    const pi = i << 2;
-    data[i] = rgba[pi] / 255;
-    data[ch + i] = rgba[pi + 1] / 255;
-    data[2 * ch + i] = rgba[pi + 2] / 255;
-  }
-  return new ort.Tensor('float32', data, [1, 3, sz, sz]);
-}
-
-function decodeYOLO(data, dims, confThreshold, iouThreshold) {
-  const numPreds = dims[2];
-  const raw = [];
-  const maxCx = Math.max(...Array.from(data.subarray(0, Math.min(numPreds, 100))));
-  const normalized = maxCx < 2;
-  const sc = normalized ? 640 : 1;
-
-  for (let i = 0; i < numPreds; i++) {
-    const cx = data[i];
-    const cy = data[numPreds + i];
-    const w = data[2 * numPreds + i];
-    const h = data[3 * numPreds + i];
-    const conf = data[4 * numPreds + i];
-    if (conf < 0.05) continue;
-    raw.push({
-      x1: (cx - w / 2) * sc,
-      y1: (cy - h / 2) * sc,
-      x2: (cx + w / 2) * sc,
-      y2: (cy + h / 2) * sc,
-      score: conf,
-    });
-  }
-
-  raw.sort((a, b) => b.score - a.score);
-  const picked = new Array(raw.length).fill(false);
-  const result = [];
-  for (let i = 0; i < raw.length; i++) {
-    if (picked[i]) continue;
-    if (raw[i].score < confThreshold) continue;
-    result.push(raw[i]);
-    for (let j = i + 1; j < raw.length; j++) {
-      if (picked[j]) continue;
-      const iou = iouCalc(raw[i], raw[j]);
-      if (iou >= iouThreshold) picked[j] = true;
-    }
-  }
-  return result;
-}
-
-function iouCalc(a, b) {
-  const x1 = Math.max(a.x1, b.x1);
-  const y1 = Math.max(a.y1, b.y1);
-  const x2 = Math.min(a.x2, b.x2);
-  const y2 = Math.min(a.y2, b.y2);
-  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-  const areaA = (a.x2 - a.x1) * (a.y2 - a.y1);
-  const areaB = (b.x2 - b.x1) * (b.y2 - b.y1);
-  return inter / (areaA + areaB - inter + 1e-6);
-}
-
-function toOriginalBox(box) {
-  const t = _detTransform;
-  return {
-    x1: Math.max(0, (box.x1 - t.ox) / t.scale),
-    y1: Math.max(0, (box.y1 - t.oy) / t.scale),
-    x2: Math.min(t.vw, (box.x2 - t.ox) / t.scale),
-    y2: Math.min(t.vh, (box.y2 - t.oy) / t.scale),
-    score: box.score,
-  };
-}
-
-async function detectPlate(video) {
-  if (!detector) return [];
-  const input = preprocessDetector(video);
-  const results = await detector.run({ [detector.inputNames[0]]: input });
-  const output = results[detector.outputNames[0]];
-
-  const confThreshold = 0.15;
-  const iouThreshold = 0.45;
-
-  let boxData;
-  if (output.data instanceof Float32Array) {
-    boxData = output.data;
-  } else {
-    boxData = new Float32Array(output.data.length);
-    for (let i = 0; i < output.data.length; i++) boxData[i] = output.data[i];
-  }
-
-  const rawBoxes = decodeYOLO(boxData, output.dims, confThreshold, iouThreshold);
-  const mapped = rawBoxes.map(b => toOriginalBox(b)).filter(b => {
-    const w = b.x2 - b.x1;
-    const h = b.y2 - b.y1;
-    return w >= 30 && h >= 10 && w / h < 12;
-  });
-  return mapped;
-}
-
-let _cropCanvas = null;
-let _cropCtx = null;
-
-function cropImageData(video, box) {
-  const w = Math.round(box.x2 - box.x1);
-  const h = Math.round(box.y2 - box.y1);
-  if (w < 4 || h < 4) return null;
-  if (!_cropCanvas) {
-    _cropCanvas = document.createElement('canvas');
-    _cropCtx = _cropCanvas.getContext('2d', { willReadFrequently: true });
-  }
-  _cropCanvas.width = w;
-  _cropCanvas.height = h;
-  _cropCtx.drawImage(video, box.x1, box.y1, w, h, 0, 0, w, h);
-  return _cropCtx.getImageData(0, 0, w, h);
-}
-
-let _ocrSrcCanvas = null;
-let _ocrDstCanvas = null;
-let _ocrDstCtx = null;
-
-function preprocessOCR(imageData) {
-  const oldW = imageData.width;
-  const oldH = imageData.height;
-  const newH = 48;
-  const newW = Math.max(1, Math.round(oldW * (newH / oldH)));
-
-  if (!_ocrSrcCanvas) {
-    _ocrSrcCanvas = document.createElement('canvas');
-    _ocrDstCanvas = document.createElement('canvas');
-    _ocrDstCtx = _ocrDstCanvas.getContext('2d', { willReadFrequently: true });
-  }
-  _ocrSrcCanvas.width = oldW;
-  _ocrSrcCanvas.height = oldH;
-  _ocrSrcCanvas.getContext('2d').putImageData(imageData, 0, 0);
-
-  _ocrDstCanvas.width = newW;
-  _ocrDstCanvas.height = newH;
-  _ocrDstCtx.drawImage(_ocrSrcCanvas, 0, 0, newW, newH);
-
-  const resized = _ocrDstCtx.getImageData(0, 0, newW, newH);
-  const pixels = resized.data;
-  const nchw = new Float32Array(3 * newH * newW);
-  for (let y = 0; y < newH; y++) {
-    for (let x = 0; x < newW; x++) {
-      const srcIdx = (y * newW + x) * 4;
-      const dstIdx = y * newW + x;
-      nchw[dstIdx] = pixels[srcIdx] / 127.5 - 1.0;
-      nchw[newH * newW + dstIdx] = pixels[srcIdx + 1] / 127.5 - 1.0;
-      nchw[2 * newH * newW + dstIdx] = pixels[srcIdx + 2] / 127.5 - 1.0;
-    }
-  }
-  return new ort.Tensor('float32', nchw, [1, 3, newH, newW]);
-}
-
-function ctcGreedyDecode(data, dims) {
-  const timeSteps = dims[1];
-  const vocabSize = dims[2];
-  let prev = 0;
-  let result = '';
-  for (let t = 0; t < timeSteps; t++) {
-    let bestIdx = 0;
-    let bestVal = -Infinity;
-    const offset = t * vocabSize;
-    for (let v = 0; v < vocabSize; v++) {
-      if (data[offset + v] > bestVal) {
-        bestVal = data[offset + v];
-        bestIdx = v;
-      }
-    }
-    if (bestIdx !== 0 && bestIdx !== prev) {
-      const ch = ocrChars[bestIdx];
-      if (ch) result += ch;
-    }
-    prev = bestIdx;
-  }
-  return result;
-}
-
-async function recognizePlate(imageData) {
-  if (!ocr || !ocrChars.length) return '';
-  const input = preprocessOCR(imageData);
-  const results = await ocr.run({ [ocr.inputNames[0]]: input });
-
-  let outData;
-  const out = results[ocr.outputNames[0]];
-  if (out.data instanceof Float32Array) {
-    outData = out.data;
-  } else {
-    outData = new Float32Array(out.data.length);
-    for (let i = 0; i < out.data.length; i++) outData[i] = out.data[i];
-  }
-  return ctcGreedyDecode(outData, out.dims);
-}
-
-let _yoloCounter = 0;
-const _yoloSkip = isMobile ? 3 : 2;
-let _lastGoodBox = null;
-let _goodBoxAge = 0;
-
-let _ocrCounter = 0;
-const _ocrSkipInterval = isMobile ? 2 : 3;
-let _lastBoxCenter = null;
-
-let _lastPlate = null;
-let _noDetectFrames = 0;
-const NO_DETECT_LIMIT = 20;
-
-let _smoothFallback = null;
 
 async function startCamera() {
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: isMobile ? 640 : 1280 }, height: { ideal: isMobile ? 480 : 720 } },
-      audio: false,
-    });
-    document.getElementById('video').srcObject = mediaStream;
-    await document.getElementById('video').play();
-    setStatus('Listo');
+    camera = new Camera(document.getElementById('video'));
+    const resolution = isMobile ? '640x480' : '1280x720';
+    await camera.start(resolution, 30);
     return true;
   } catch (e) {
-    showToast('Error al acceder a la camara: ' + e.message, 'error');
+    showToast('Error camara: ' + e.message, 'error');
     return false;
   }
 }
@@ -393,160 +120,191 @@ async function startCamera() {
 function setStatus(msg) { const el = document.getElementById('cam-status'); if (el) el.textContent = msg; }
 
 function stopCamera() {
+  running = false;
   if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-  isScanning = false;
-  _yoloCounter = 0;
-  _lastGoodBox = null;
-  _goodBoxAge = 0;
-  _ocrCounter = 0;
-  _lastBoxCenter = null;
-  _lastPlate = null;
-  _noDetectFrames = 0;
-  if (fallbackDetector) fallbackDetector.reset();
-  _smoothFallback = null;
-  plateWindow.length = 0;
+  if (camera) camera.stop();
+  lastPlate = null;
+  lastPlateBox = null;
+  noDetectFrames = 0;
+  streakCandidate = null;
+  streakCount = 0;
+  ocrCounter = 0;
+  lastBoxCenter = null;
+  if (detector) detector._smoothBox = null;
   document.getElementById('scan-toggle').checked = false;
   document.getElementById('switch-label').textContent = 'Iniciar deteccion';
   document.getElementById('cam-status').classList.remove('scanning');
-  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
-  setStatus('En espera');
   hideOverlay();
+  clearCanvasOverlay();
+  setStatus('En espera');
 }
 
 window.toggleScan = async function () {
-  if (isScanning) { stopCamera(); setStatus('Detenido'); return; }
-  if (!mediaStream && !(await startCamera())) { document.getElementById('scan-toggle').checked = false; return; }
-  isScanning = true;
+  if (running) { stopCamera(); setStatus('Detenido'); return; }
+  if (!camera && !(await startCamera())) { document.getElementById('scan-toggle').checked = false; return; }
+  running = true;
   document.getElementById('switch-label').textContent = 'Apagar camara';
   document.getElementById('cam-status').classList.add('scanning');
   setStatus('Escaneando...');
-  _lastPlate = null;
-  _noDetectFrames = 0;
-  if (fallbackDetector) fallbackDetector.reset();
-  if (detector) _smoothFallback = null;
+  lastPlate = null;
+  noDetectFrames = 0;
+  if (detector) detector._smoothBox = null;
   requestAnimationFrame(loop);
 };
 
+function resizeCanvas() {
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('overlay-canvas');
+  if (!video || !video.videoWidth || !canvas) return;
+  if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+  }
+}
+
 async function loop() {
-  if (!isScanning) return;
+  if (!running) return;
   const video = document.getElementById('video');
   if (!video || !video.videoWidth) { rafId = requestAnimationFrame(loop); return; }
   updateFPS();
+  resizeCanvas();
 
   let boxes = [];
-  _yoloCounter++;
-  const skip = (_yoloCounter % _yoloSkip !== 0) && _lastGoodBox && _goodBoxAge < 8;
-
-  if (skip) {
-    _goodBoxAge++;
-    if (_lastGoodBox) boxes = [{ ..._lastGoodBox }];
-  } else if (detector) {
+  if (detector && !detector.mock) {
     try {
-      boxes = await detectPlate(video);
-      if (boxes.length > 0) {
-        _lastGoodBox = { ...boxes[0] };
-        _goodBoxAge = 0;
-      } else {
-        _goodBoxAge++;
-      }
-    } catch (e) { console.warn('YOLO error:', e); }
+      boxes = await detector.detect(video);
+    } catch (e) { console.warn('detect error:', e); }
   }
-
-  if (boxes.length === 0 && fallbackDetector) {
-    const fb = fallbackDetector.detect(video);
-    if (fb && fb.score > 0.3) {
-      if (_smoothFallback) {
-        const alpha = 0.35;
-        _smoothFallback.x1 += (fb.x1 - _smoothFallback.x1) * alpha;
-        _smoothFallback.y1 += (fb.y1 - _smoothFallback.y1) * alpha;
-        _smoothFallback.x2 += (fb.x2 - _smoothFallback.x2) * alpha;
-        _smoothFallback.y2 += (fb.y2 - _smoothFallback.y2) * alpha;
-        _smoothFallback.score = fb.score;
-      } else {
-        _smoothFallback = { x1: fb.x1, y1: fb.y1, x2: fb.x2, y2: fb.y2, score: fb.score };
-      }
-      boxes = [{ ..._smoothFallback }];
-    } else {
-      _smoothFallback = null;
-    }
-  }
-
-  drawOverlay(boxes);
 
   if (boxes.length > 0) {
-    _noDetectFrames = 0;
+    noDetectFrames = 0;
     const box = boxes[0];
+
+    if (lastPlate || streakCandidate) {
+      lastPlateBox = { x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y2 };
+    }
+
     const center = { x: (box.x1 + box.x2) / 2, y: (box.y1 + box.y2) / 2 };
     const bw = box.x2 - box.x1, bh = box.y2 - box.y1;
-    const isStable = _lastBoxCenter &&
-      Math.abs(center.x - _lastBoxCenter.x) < bw * 0.15 &&
-      Math.abs(center.y - _lastBoxCenter.y) < bh * 0.15;
-    _lastBoxCenter = center;
+    const isStable = lastBoxCenter &&
+      Math.abs(center.x - lastBoxCenter.x) < bw * 0.15 &&
+      Math.abs(center.y - lastBoxCenter.y) < bh * 0.15;
+    lastBoxCenter = center;
 
-    _ocrCounter++;
-    const skipOCR = isStable && (_ocrCounter % _ocrSkipInterval !== 0);
+    ocrCounter++;
+    const skipOCR = isStable && (ocrCounter % ocrSkipInterval !== 0);
 
-    if (!skipOCR) {
-      const crop = cropImageData(video, box);
+    if (!skipOCR && ocr && !ocr.mock) {
+      const crop = detector.cropPlate(video, box);
       if (crop) {
         let rawText = '';
-        try {
-          rawText = await recognizePlate(crop);
-        } catch (e) { console.warn('OCR error:', e); }
+        try { rawText = await ocr.recognize(crop); } catch (e) { console.warn('OCR error:', e); }
+        lastRawText = rawText || '(vacio)';
 
         if (rawText) {
           const normalized = normalizePlate(rawText);
-          const corrected = corrector ? corrector.correct(normalized) : normalized;
-          if (validatePlate(corrected)) {
-            addToWindow(corrected);
-            const consensus = getConsensus();
-            if (consensus && consensus !== _lastPlate) {
-              _lastPlate = consensus;
-              processPlate(consensus);
-              plateWindow.length = 0;
-            } else if (!_lastPlate) {
-              showOverlay(corrected, 'warning', 'Confirmando...');
+          const corrected = corrector.correct(normalized);
+          lastCorrected = corrected || '(vacio)';
+          lastOCRValid = validatePlate(corrected) && corrected.length === 6;
+
+          if (lastOCRValid) {
+            if (corrected === streakCandidate) streakCount++;
+            else { streakCandidate = corrected; streakCount = 1; }
+
+            if (streakCount >= streakRequired && streakCandidate !== lastPlate) {
+              lastPlate = streakCandidate;
+              lastPlateBox = { x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y2 };
+              processPlate(lastPlate);
+              streakCount = 0;
             }
           } else {
-            plateWindow.length = 0;
+            streakCandidate = null; streakCount = 0;
           }
         } else {
-          plateWindow.length = 0;
+          lastCorrected = '(vacio)';
+          lastOCRValid = false;
+          streakCandidate = null; streakCount = 0;
         }
       }
     }
   } else {
-    _noDetectFrames++;
-    plateWindow.length = 0;
-    if (_noDetectFrames > NO_DETECT_LIMIT && _lastPlate) {
-      _lastPlate = null;
+    noDetectFrames++;
+    streakCandidate = null; streakCount = 0;
+    if (noDetectFrames > noDetectLimit && lastPlate) {
+      lastPlate = null; lastPlateBox = null;
       hideOverlay();
     }
   }
 
+  drawCanvasOverlay(boxes);
   rafId = requestAnimationFrame(loop);
 }
 
-function drawOverlay(boxes) {
-  const overlay = document.getElementById('scan-frame');
-  const video = document.getElementById('video');
-  if (!overlay || !video.videoWidth) return;
-  if (boxes.length === 0) {
-    overlay.classList.remove('active');
-    overlay.style.left = overlay.style.top = overlay.style.width = overlay.style.height = '';
-    return;
+function drawCanvasOverlay(boxes) {
+  const canvas = document.getElementById('overlay-canvas');
+  if (!canvas || !canvas.width) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  for (const d of boxes) {
+    const iw = d.x2 - d.x1;
+    const ih = d.y2 - d.y1;
+    if (iw < 2 || ih < 2) continue;
+    ctx.strokeStyle = d.score > 0.5 ? '#00ff66' : '#ffcc00';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(d.x1, d.y1, iw, ih);
+    ctx.fillStyle = d.score > 0.5 ? '#00ff66' : '#ffcc00';
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText((d.score * 100).toFixed(0) + '%', d.x1, d.y1 - 5);
   }
-  const b = boxes[0];
-  const scaleX = video.clientWidth / video.videoWidth;
-  const scaleY = video.clientHeight / video.videoHeight;
-  const w = b.x2 - b.x1;
-  const h = b.y2 - b.y1;
-  overlay.style.left = (b.x1 * scaleX) + 'px';
-  overlay.style.top = (b.y1 * scaleY) + 'px';
-  overlay.style.width = (w * scaleX) + 'px';
-  overlay.style.height = (h * scaleY) + 'px';
-  overlay.style.borderColor = b.score > 0.5 ? '#00ff66' : '#ffcc00';
-  overlay.classList.add('active');
+
+  if (lastPlate && lastPlateBox) {
+    const box = lastPlateBox;
+    const iw = box.x2 - box.x1, ih = box.y2 - box.y1;
+    ctx.strokeStyle = '#00ff66';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(box.x1, box.y1, iw, ih);
+
+    const display = formatPlate(lastPlate);
+    ctx.font = 'bold 20px monospace';
+    const tw = ctx.measureText(display).width;
+    const lx = box.x1;
+    const ly = Math.max(4, box.y1 - 34);
+    ctx.fillStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillRect(lx, ly, tw + 16, 30);
+    ctx.fillStyle = '#00ff66';
+    ctx.fillText(display, lx + 8, ly + 22);
+  }
+
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 6]);
+  ctx.beginPath();
+  ctx.moveTo(cx - 30, cy); ctx.lineTo(cx + 30, cy);
+  ctx.moveTo(cx, cy - 30); ctx.lineTo(cx, cy + 30);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  if (boxes.length === 0 && !lastPlate) {
+    ctx.fillStyle = 'rgba(255,50,50,0.6)';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('Sin deteccion', 10, 20);
+  }
+}
+
+function clearCanvasOverlay() {
+  const canvas = document.getElementById('overlay-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function formatPlate(p) {
+  if (/^[A-Z]{4}\d{2}$/.test(p)) return p.slice(0, 4) + ' ' + p.slice(4);
+  if (/^[A-Z]{2}\d{4}$/.test(p)) return p.slice(0, 2) + ' ' + p.slice(2);
+  return p;
 }
 
 function showOverlay(plate, type, statusText) {
