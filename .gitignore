@@ -1,3 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dev-dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
 .vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Playwright
+test-results/
+playwright-report/
+
+# Misc
 plateapp2/
 ocr-worker.js
