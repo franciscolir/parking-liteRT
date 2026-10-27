@@ -3,7 +3,7 @@
  * Configuración y helpers de base de datos
  */
 
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_CONFIG } from './supabase-config.js';
 
 export const supabase = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey, {
@@ -168,7 +168,7 @@ export async function getScanStats(userId) {
     .from('scan_stats')
     .select('*')
     .eq('user_id', userId)
-    .single();
+    .maybeSingle(); 
   if (error && error.code !== 'PGRST116') throw error; // PGRST116 = no rows
   return data || { total_scans: 0, registered_count: 0, stolen_count: 0, unknown_count: 0 };
 }
@@ -207,7 +207,7 @@ export async function addContact(contactData) {
     .from('contacts')
     .insert({ ...contactData, user_id: user.id })
     .select()
-    .single();
+    .maybeSingle(); 
   if (error) throw error;
   return data;
 }
@@ -218,7 +218,7 @@ export async function updateContact(id, updates) {
     .update(updates)
     .eq('id', id)
     .select()
-    .single();
+    .maybeSingle(); 
   if (error) throw error;
   return data;
 }
@@ -252,7 +252,7 @@ export async function getProfile(userId) {
     .from('users')
     .select('*')
     .eq('id', userId)
-    .single();
+    .maybeSingle(); 
   if (error && error.code !== 'PGRST116') throw error;
   return data;
 }
@@ -266,7 +266,7 @@ export async function updateProfile(updates) {
     .update(updates)
     .eq('id', user.id)
     .select()
-    .single();
+    .maybeSingle(); 
   if (error) throw error;
   return data;
 }

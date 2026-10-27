@@ -14,7 +14,7 @@ export class PlateOCR {
     try {
       const [session, chars] = await Promise.all([
         ort.InferenceSession.create(modelPath, {
-          executionProviders: ['webgl', 'wasm'],
+          executionProviders: ['webgpu', 'webgl', 'wasm'],
         }),
         fetch(keysPath).then(r => r.json()),
       ]);

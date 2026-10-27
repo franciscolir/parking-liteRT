@@ -1,37 +1,47 @@
-# Dependencies
+# Dependencias
 node_modules/
+.pnp
+.pnp.js
 
-# Build outputs
+# Build
 dist/
 dev-dist/
-build/
+.vite/
+*.local
 
-# Environment files
-.env
-.env.local
-.env.*.local
+# Tests
+coverage/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
 
-# IDE
-.vscode/
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
 .idea/
-*.swp
-*.swo
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
-npm-debug.log*
+# Env (¡NO subir credenciales!)
+.env
+.env.local
+.env.*.local
 
-# Test coverage
-coverage/
-
-# Playwright
-test-results/
-playwright-report/
-
-# Misc
-plateapp2/
-ocr-worker.js
+# Modelos ONNX (grandes, se descargan aparte o se suben a LFS)
+# Descomenta si NO quieres versionar los modelos:
+# public/models/*.onnx

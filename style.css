@@ -45,7 +45,10 @@ html, body {
 
 .view {
   position: absolute;
-  inset: 0;
+  top: 52px;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--nav-h) + var(--safe-bottom));
   bottom: calc(var(--nav-h) + var(--safe-bottom));
   opacity: 0;
   visibility: hidden;
@@ -63,6 +66,9 @@ html, body {
   transform: translateY(0);
   position: relative;
   z-index: 1;
+}
+#view-home {
+  padding-top: 8px;
 }
 
 .view::-webkit-scrollbar { width: 4px; }
@@ -1156,4 +1162,480 @@ html, body {
 #auth-form-container .btn-full {
   width: 100% !important;
   margin: 8px 0 0 !important;
+}
+
+/* ============================ ADMIN DASHBOARD ============================ */
+
+.admin-user-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 60%;
+}
+
+.admin-user-email {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Stats grid admin */
+.stats-grid.admin-grid {
+  margin-bottom: 16px;
+}
+
+.admin-stat .num {
+  color: var(--primary);
+}
+
+/* Tabs */
+.admin-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 16px 16px;
+  padding: 4px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,.06);
+}
+
+.admin-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 8px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .2s, color .2s;
+}
+
+.admin-tab:active { background: rgba(59,130,246,.1); }
+.admin-tab.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+.admin-tab-content { display: none; }
+.admin-tab-content.active { display: block; }
+
+/* Toolbar */
+.admin-toolbar {
+  display: flex;
+  gap: 8px;
+  margin: 0 16px 12px;
+  align-items: center;
+}
+
+.admin-select {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+}
+
+/* Lista admin */
+.admin-list {
+  margin: 0 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--card);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  transition: background .15s;
+}
+
+.admin-card:active { background: var(--surface); }
+
+.admin-card-main { flex: 1; min-width: 0; }
+
+.admin-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-card-title.mono {
+  font-family: 'Courier New', monospace;
+  letter-spacing: 1px;
+  color: var(--primary);
+}
+
+.admin-card-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.admin-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.admin-role {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+
+.admin-role.admin { background: rgba(59,130,246,.2); color: var(--primary); }
+.admin-role.user { background: rgba(148,163,184,.15); color: var(--text-muted); }
+
+.admin-date {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.admin-meta-text {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.admin-self-tag {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.admin-tag-inactive {
+  font-size: 10px;
+  background: rgba(239,68,68,.15);
+  color: var(--danger);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.admin-loading, .admin-empty, .admin-error {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.admin-error { color: var(--danger); }
+
+/* Botones pequeños */
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .15s, transform .1s;
+  white-space: nowrap;
+}
+
+.btn-small:active { transform: scale(.96); }
+
+.btn-small.btn-primary { background: var(--primary); color: #fff; }
+.btn-small.btn-primary:active { background: var(--primary-dark); }
+
+.btn-small.btn-secondary {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,.1);
+}
+
+.btn-small.btn-danger {
+  background: rgba(239,68,68,.15);
+  color: var(--danger);
+  border: 1px solid rgba(239,68,68,.3);
+}
+
+.btn-small.btn-danger:active { background: rgba(239,68,68,.25); }
+
+/* Modal de patente */
+#admin-plate-modal .modal-box { max-width: 400px; }
+/* ============================ GLOBAL HEADER ============================ */
+.app-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 90;
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-brand-icon {
+  font-size: 20px;
+  filter: drop-shadow(0 0 6px rgba(59,130,246,.4));
+}
+
+.app-brand-name {
+  font-size: 15px;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: .3px;
+}
+
+.header-auth-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background .15s, transform .1s;
+}
+
+.header-auth-btn:active {
+  transform: scale(.96);
+  background: var(--primary);
+  color: #fff;
+}
+
+.header-auth-btn svg {
+  flex-shrink: 0;
+}
+
+/* Ajustar las vistas para que no queden debajo del header */
+.view {
+  top: 52px;   /* ← antes era 0 */
+}
+
+/* Ajustar el safe-area top en móvil */
+@supports (padding-top: env(safe-area-inset-top)) {
+  .app-header {
+    padding-top: env(safe-area-inset-top);
+    height: calc(52px + env(safe-area-inset-top));
+  }
+  .view {
+    top: calc(52px + env(safe-area-inset-top));
+  }
+  /* ============================ GUEST LOGIN ============================ */
+.guest-login-container {
+  min-height: calc(100vh - 52px - 64px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.guest-login-hero {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.guest-login-icon {
+  width: 72px;
+  height: 72px;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  margin: 0 auto 16px;
+  box-shadow: 0 8px 32px rgba(59,130,246,.35);
+}
+
+.guest-login-hero h1 {
+  font-size: 26px;
+  font-weight: 800;
+  margin-bottom: 6px;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.guest-login-hero p {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.guest-login-form {
+  width: 100%;
+}
+
+.guest-login-form .form-group {
+  margin-bottom: 16px;
+}
+
+.guest-login-form input {
+  font-size: 16px;
+  padding: 14px 16px;
+  text-align: center;
+  letter-spacing: .5px;
+}
+
+.guest-login-error {
+  background: rgba(239,68,68,.1);
+  border: 1px solid rgba(239,68,68,.3);
+  color: var(--danger);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.guest-login-error.hidden { display: none; }
+
+.guest-login-footer {
+  margin-top: 24px;
+  text-align: center;
+  width: 100%;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 8px 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.btn-link:active { color: var(--primary); }
+
+/* Form de admin dentro del guest login */
+.guest-admin-form {
+  width: 100%;
+  margin-top: 16px;
+  padding-top: 24px;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+
+.guest-admin-form.hidden { display: none; }
+
+.guest-admin-form .btn-link {
+  display: block;
+  margin: 12px auto 0;
+}
+
+/* Header del guest login: ocultar los nav items cuando no hay sesión */
+body.is-guest-login .bottom-nav {
+  display: none;
+}
+
+body.is-guest-login .app-header {
+  /* Header minimalista sin botón de auth */
+  justify-content: center;
+}
+}
+
+/* Admin: secciones y config */
+.admin-section-header {
+  margin: 16px 16px 8px;
+}
+
+.admin-section-header h3 {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+
+.admin-input-number {
+  width: 70px;
+  background: var(--surface);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  text-align: center;
+}
+/* Tabs del admin: scroll horizontal si no caben */
+.admin-tabs {
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.admin-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.admin-tab {
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 80px;
+}
+
+/* Cuando una tab no es Home, ocultar stats */
+.admin-tab-content:not(#admin-tab-home) .stats-grid {
+  display: none;
 }

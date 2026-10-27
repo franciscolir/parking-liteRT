@@ -40,7 +40,7 @@ export class PlateDetector {
   async loadModel(modelPath) {
     try {
       this.session = await ort.InferenceSession.create(modelPath, {
-        executionProviders: ['webgl', 'wasm'],
+        executionProviders: ['webgpu', 'webgl', 'wasm'], 
       });
       this.mock = false;
     } catch (e) {

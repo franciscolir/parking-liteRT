@@ -1,22 +1,30 @@
 /**
- * Configuración de Supabase para PlateDetect
+ * Configuración de Supabase para PlateDetect (Vite)
+ * 
+ * Las variables se definen en .env (basado en .env.example)
  * 
  * INSTRUCCIONES:
- * 1. Crea un proyecto en https://supabase.com
- * 2. Ve a Settings > API
- * 3. Copia "Project URL" y "anon public key"
- * 4. Reemplaza los valores abajo
- * 5. Ejecuta el SQL de supabase-schema.sql en el SQL Editor de Supabase
+ * 1. Copia .env.example a .env
+ * 2. Completa con tus credenciales de Supabase
+ * 3. Reinicia el servidor de desarrollo (npm run dev)
  */
 
+// Vite expone variables de entorno con prefijo VITE_ en import.meta.env
 export const SUPABASE_CONFIG = {
-  // REEMPLAZA ESTOS VALORES CON LOS DE TU PROYECTO SUPABASE
-  url: 'https://TU_PROYECTO.supabase.co',
-  anonKey: 'TU_ANON_KEY_AQUI'
+  url: import.meta.env.VITE_SUPABASE_URL || 'https://TU_PROYECTO.supabase.co',
+  anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY || 'TU_ANON_KEY_AQUI',
 };
 
 // Validación básica
-if (SUPABASE_CONFIG.url.includes('TU_PROYECTO') || SUPABASE_CONFIG.anonKey.includes('TU_ANON_KEY')) {
-  console.warn('[Supabase] ⚠️ Configuración no establecida. Edita supabase-config.js con tus credenciales.');
-  console.warn('[Supabase] Ve a https://supabase.com/dashboard/project/_/settings/api');
+const isPlaceholder = SUPABASE_CONFIG.url.includes('TU_PROYECTO') ||
+                      SUPABASE_CONFIG.anonKey.includes('TU_ANON_KEY');
+
+if (isPlaceholder) {
+  console.warn('[Supabase] ⚠️ Configuración no establecida.');
+  console.warn('[Supabase] 1. Copia .env.example a .env');
+  console.warn('[Supabase] 2. Edita .env con tus credenciales de Supabase');
+  console.warn('[Supabase] 3. Reinicia: npm run dev');
+  console.warn('[Supabase] Dashboard: https://supabase.com/dashboard/project/_/settings/api');
+} else {
+  console.log('[Supabase] ✅ Conectado a:', SUPABASE_CONFIG.url);
 }

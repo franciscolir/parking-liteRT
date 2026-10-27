@@ -1,8 +1,10 @@
+import { guestAuth } from './guest-auth.js';
 import { Camera } from './camera.js';
 import { PlateDetector } from './detector.js';
 import { PlateOCR } from './ocr.js';
 import { validatePlate, normalizePlate } from './validator.js';
 import { Corrector } from './corrector.js';
+import { AdminDashboard } from './admin.js';
 import {
   supabase,
   signUp, signIn, signOut, getCurrentUser, onAuthStateChange,
@@ -14,6 +16,8 @@ import {
   isAuthenticated, getUserId,
   PlateType, ScanStatus, ContactType
 } from './supabase-client.js';
+// Exponer para debugging
+//window.supabase = supabase;
 
 // ============================================================
 // ESTADO GLOBAL
@@ -38,6 +42,8 @@ let lastCorrected = '';
 let lastOCRValid = false;
 
 let currentUser = null;
+let guestSession = null;   // { name, session_token } | null
+let appMode = 'unknown';   // 'admin' | 'guest' | 'unknown'
 let userProfile = null;
 let scanHistory = [];
 let scanCount = { total: 0, registered: 0, stolen: 0, unknown: 0 };
@@ -51,15 +57,32 @@ const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 // INICIALIZACIÓN
 // ============================================================
 document.addEventListener('DOMContentLoaded', async function () {
-  // Event listeners UI
   setupUIEvents();
 
-  // Auth state listener
-  onAuthStateChange(handleAuthChange);
+  // Configurar callback de expiración de guest
+  guestAuth.onExpired = () => {
+    guestSession = null;
+    appMode = 'unknown';
+    showToast('Sesión expirada. Vuelve a ingresar.', 'error');
+    navigate('guest-login');
+  };
 
-  // Cargar sesión actual
-  const user = await getCurrentUser();
-  if (user) await handleAuthChange('SIGNED_IN', user);
+  // Escuchar cambios de auth de Supabase (solo afecta a admin)
+  onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_OUT') {
+      currentUser = null;
+      userProfile = null;
+      appMode = 'unknown';
+      updateAuthUI(false);
+      // Si no hay guest, ir a login
+      if (!guestSession) {
+        navigate('guest-login');
+      }
+    }
+  });
+
+  // Iniciar auth (admin o guest o login)
+  await initAuth();
 
   // Inicializar modelos IA
   initModels();
@@ -69,24 +92,86 @@ document.addEventListener('DOMContentLoaded', async function () {
 
   // PWA Install
   setupPWAInstall();
-
-  // Service Worker
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  }
 });
 
 // ============================================================
 // AUTH HANDLERS
 // ============================================================
+/**
+ * Determina el modo de la app al arrancar:
+ *   - 'admin' si hay sesión de Supabase Auth
+ *   - 'guest' si hay sesión flotante válida
+ *   - 'unknown' si no hay ninguna
+ */
+function setupGuestHeartbeat() {
+  // El heartbeat ya lo maneja guestAuth internamente.
+  // Este callback se ejecuta cuando la sesión expira.
+  guestAuth.onExpired = () => {
+    guestSession = null;
+    appMode = 'unknown';
+    showToast('Sesión expirada. Vuelve a ingresar.', 'error');
+    navigate('guest-login');
+  };
+}
+async function initAuth() {
+  // 1. ¿Hay sesión de Supabase Auth? (admin)
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+    // Verificar que sea admin
+    const { data: profile } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (profile?.role === 'admin') {
+      currentUser = user;
+      userProfile = profile;
+      appMode = 'admin';
+      await loadUserData();
+      updateAuthUI(true);
+      await navigate('home');
+      return;
+    }
+
+    // Si no es admin, cerrar sesión (usuarios flotantes no usan Supabase Auth)
+    await supabase.auth.signOut();
+  }
+
+  // 2. ¿Hay sesión flotante guardada?
+  const guest = await guestAuth.init();
+  if (guest.ok && guest.session) {
+    guestSession = guest.session;
+    appMode = 'guest';
+    setupGuestHeartbeat();
+    await navigate('home');
+    return;
+  }
+
+  // 3. Sin sesión → mostrar login flotante
+  appMode = 'unknown';
+  await navigate('guest-login');
+}
 async function handleAuthChange(event, session) {
   console.log('[Auth]', event, session?.user?.id);
 
   if (event === 'SIGNED_IN' && session?.user) {
+        // Mostrar/ocultar nav de admin según el rol
+    const navAdmin = document.getElementById('nav-admin');
+    if (navAdmin) {
+      const { data: prof } = await supabase
+        .from('users')
+        .select('role')
+        .eq('id', session.user.id)
+        .single();
+      navAdmin.style.display = prof?.role === 'admin' ? 'flex' : 'none';
+    }
     currentUser = session.user;
     await loadUserData();
     updateAuthUI(true);
   } else if (event === 'SIGNED_OUT') {
+        const navAdmin = document.getElementById('nav-admin');
+    if (navAdmin) navAdmin.style.display = 'none';
     currentUser = null;
     userProfile = null;
     scanHistory = [];
@@ -226,27 +311,53 @@ function setupUIEvents() {
 
   // Auth forms (se crean dinámicamente en renderAuthView)
   // Ver setupAuthForms() en navigate()
+    // Botón de auth en el header
+   const headerAuthBtn = document.getElementById('header-auth-btn');
+  if (headerAuthBtn) {
+    headerAuthBtn.addEventListener('click', () => {
+      if (appMode === 'admin' || appMode === 'guest') {
+        navigate('profile');
+      } else {
+        navigate('guest-login');
+      }
+    });
+  }
 }
 
 function updateAuthUI(isLoggedIn) {
-  const authBtn = document.getElementById('auth-btn');
-  const userInfo = document.getElementById('user-info');
+  const btn = document.getElementById('header-auth-btn');
+  const label = document.getElementById('header-auth-label');
 
-  if (isLoggedIn) {
-    if (authBtn) authBtn.style.display = 'none';
-    if (userInfo) {
-      userInfo.style.display = 'flex';
-      userInfo.querySelector('.user-email').textContent = currentUser.email;
-      if (userProfile?.avatar_url) {
-        userInfo.querySelector('.user-avatar').src = userProfile.avatar_url;
-      }
+  if (btn && label) {
+    if (isLoggedIn && appMode === 'admin') {
+      const displayName = userProfile?.full_name || currentUser?.email?.split('@')[0] || 'Admin';
+      label.textContent = displayName.length > 12 ? displayName.slice(0, 10) + '…' : displayName;
+      btn.querySelector('svg').innerHTML = `
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" fill="none" stroke="currentColor" stroke-width="2"/>
+        <circle cx="12" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="2"/>
+      `;
+    } else if (appMode === 'guest') {
+      const displayName = guestSession?.name || 'Invitado';
+      label.textContent = displayName.length > 12 ? displayName.slice(0, 10) + '…' : displayName;
+      btn.querySelector('svg').innerHTML = `
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" fill="none" stroke="currentColor" stroke-width="2"/>
+        <circle cx="12" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="2"/>
+      `;
+    } else {
+      label.textContent = 'Acceso';
+      btn.querySelector('svg').innerHTML = `
+        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" fill="none" stroke="currentColor" stroke-width="2"/>
+        <polyline points="10 17 15 12 10 7" fill="none" stroke="currentColor" stroke-width="2"/>
+        <line x1="15" y1="12" x2="3" y2="12" fill="none" stroke="currentColor" stroke-width="2"/>
+      `;
     }
-    // Mostrar vista de perfil en nav si existe
-    document.querySelectorAll('.nav-item[data-view="profile"]').forEach(el => el.style.display = 'flex');
-  } else {
-    if (authBtn) authBtn.style.display = 'flex';
-    if (userInfo) userInfo.style.display = 'none';
-    document.querySelectorAll('.nav-item[data-view="profile"]').forEach(el => el.style.display = 'none');
+  }
+
+  // Nav admin: solo visible si appMode === 'admin' Y role === 'admin'
+  const navAdmin = document.getElementById('nav-admin');
+  if (navAdmin) {
+    const isAdmin = isLoggedIn && appMode === 'admin' && userProfile?.role === 'admin';
+    navAdmin.style.display = isAdmin ? 'flex' : 'none';
   }
 }
 
@@ -254,6 +365,21 @@ function updateAuthUI(isLoggedIn) {
 // NAVEGACIÓN ENTRE VISTAS
 // ============================================================
 window.navigate = async function (view) {
+  // Bloquear vistas protegidas si no hay sesión
+  const protectedViews = ['home', 'camera', 'register', 'call', 'plates', 'profile', 'admin'];
+  const needsAuth = protectedViews.includes(view);
+  const hasSession = appMode === 'admin' || appMode === 'guest';
+
+  if (needsAuth && !hasSession) {
+    view = 'guest-login';
+  }
+
+  // Si va a admin y no es admin, redirigir
+  if (view === 'admin' && appMode !== 'admin') {
+    view = 'home';
+  }
+
+  // ... resto del código original de navigate
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
 
@@ -282,11 +408,29 @@ window.navigate = async function (view) {
     case 'register':
       // Pre-fill si viene de detección
       break;
+       case 'guest-login':
+      await renderGuestLogin();
+      break;
     case 'profile':
-      await renderProfileView();
+      if (appMode === 'admin') {
+        await renderProfileView();
+      } else {
+        // Perfil para guest: mostrar nombre y botón de logout
+        renderGuestProfile();
+      }
       break;
     case 'auth':
       renderAuthView();
+      break;
+    case 'admin':
+      if (!window._adminDashboard) {
+        window._adminDashboard = new AdminDashboard();
+        const ok = await window._adminDashboard.init();
+        if (!ok) {
+          showToast('Acceso denegado: se requiere rol admin', 'error');
+          navigate('home');
+        }
+      }
       break;
   }
 };
@@ -294,6 +438,72 @@ window.navigate = async function (view) {
 // ============================================================
 // VISTA: PERFIL
 // ============================================================
+function renderGuestProfile() {
+  const container = document.getElementById('view-profile');
+  if (!container) return;
+
+  container.innerHTML = `
+    <div class="view-header"><h1>Mi Perfil</h1></div>
+    <div class="card">
+      <div class="profile-header">
+        <img class="profile-avatar" src="/icon-192.svg" alt="Avatar">
+        <div class="profile-info">
+          <h2>${guestSession?.name || 'Invitado'}</h2>
+          <p class="user-email">Sesión flotante</p>
+          <span class="badge">GUEST</span>
+        </div>
+      </div>
+      <p style="color: var(--text-muted); font-size: 13px; margin: 16px 0; text-align: center;">
+        Estás usando la app como usuario flotante. Los escaneos se guardarán sin asociar a un usuario.
+      </p>
+      <button class="btn-danger btn-full" id="guest-logout-btn" style="margin-top:8px; background: var(--danger); color: #fff; border: none; padding: 14px; border-radius: var(--radius); font-weight: 600; cursor: pointer;">
+        Cerrar sesión
+      </button>
+    </div>
+  `;
+
+  document.getElementById('guest-logout-btn').onclick = async () => {
+    await performLogout();
+  };
+}
+async function performLogout() {
+  try {
+    if (appMode === 'admin') {
+      await supabase.auth.signOut();
+    } else if (appMode === 'guest') {
+      await guestAuth.logout();
+    }
+  } catch (e) {
+    console.warn('[Logout] error:', e);
+  }
+
+  // Resetear estado
+  currentUser = null;
+  userProfile = null;
+  guestSession = null;
+  appMode = 'unknown';
+  scanHistory = [];
+  scanCount = { total: 0, registered: 0, stolen: 0, unknown: 0 };
+  contacts = [];
+  platesCache = { registered: [], stolen: [] };
+  clearSubscriptions();
+
+  // Detener cámara
+  stopCamera();
+
+  // Limpiar UI
+  updateAuthUI(false);
+  document.getElementById('view-admin')?.classList.add('hidden');
+  document.getElementById('view-profile')?.classList.add('hidden');
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+
+  // Ir a home o guest-login
+  const hasNoSession = !currentUser && !guestSession;
+  await navigate('home');
+
+  showToast('Sesión cerrada', 'success');
+}
 async function renderProfileView() {
   const container = document.getElementById('view-profile');
   if (!container) return;
@@ -307,8 +517,7 @@ async function renderProfileView() {
     <div class="view-header"><h1>Mi Perfil</h1></div>
     <div class="card">
       <div class="profile-header">
-        <img class="profile-avatar" src="${userProfile?.avatar_url || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + currentUser.email}" alt="Avatar">
-        <div class="profile-info">
+       <img class="profile-avatar" src="${userProfile?.avatar_url || '/icon-192.svg'}" alt="Avatar"><div class="profile-info">
           <h2>${userProfile?.full_name || currentUser.email.split('@')[0]}</h2>
           <p class="user-email">${currentUser.email}</p>
           <span class="badge ${userProfile?.role === 'admin' ? 'badge-admin' : ''}">${userProfile?.role || 'user'}</span>
@@ -365,6 +574,113 @@ async function renderProfileView() {
 // ============================================================
 // VISTA: AUTH (LOGIN/REGISTER)
 // ============================================================
+async function renderGuestLogin() {
+  const form = document.getElementById('guest-login-form');
+  const input = document.getElementById('guest-name');
+  const error = document.getElementById('guest-login-error');
+  const btn = document.getElementById('guest-login-btn');
+  const adminToggle = document.getElementById('guest-admin-toggle');
+  const adminForm = document.getElementById('guest-admin-form');
+  const adminBtn = document.getElementById('guest-admin-btn');
+  const adminBack = document.getElementById('guest-admin-back');
+
+  if (!form) return;
+
+  // Ocultar nav
+  document.body.classList.add('is-guest-login');
+
+  // Reset
+  if (input) { input.value = ''; input.focus(); }
+  if (error) error.classList.add('hidden');
+  if (adminForm) adminForm.classList.add('hidden');
+
+  // Submit login flotante
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const name = input?.value.trim();
+    if (!name) {
+      if (error) { error.textContent = 'Ingresa un nombre'; error.classList.remove('hidden'); }
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Validando...';
+    if (error) error.classList.add('hidden');
+
+    const result = await guestAuth.login(name);
+
+    btn.disabled = false;
+    btn.textContent = 'Ingresar';
+
+    if (!result.ok) {
+      if (error) { error.textContent = result.error; error.classList.remove('hidden'); }
+      return;
+    }
+
+    guestSession = result.session;
+    appMode = 'guest';
+    document.body.classList.remove('is-guest-login');
+    updateAuthUI(false);
+    await navigate('home');
+  };
+
+  // Toggle admin form
+  adminToggle.onclick = () => {
+    adminForm.classList.remove('hidden');
+    form.style.display = 'none';
+    document.getElementById('guest-admin-email')?.focus();
+  };
+
+  adminBack.onclick = () => {
+    adminForm.classList.add('hidden');
+    form.style.display = 'block';
+    input?.focus();
+  };
+
+  // Login admin
+  adminBtn.onclick = async () => {
+    const email = document.getElementById('guest-admin-email')?.value.trim();
+    const password = document.getElementById('guest-admin-password')?.value;
+    const adminError = document.getElementById('guest-admin-error');
+
+    if (!email || !password) {
+      if (adminError) { adminError.textContent = 'Completa email y contraseña'; adminError.classList.remove('hidden'); }
+      return;
+    }
+
+    adminBtn.disabled = true;
+    adminBtn.textContent = 'Entrando...';
+    if (adminError) adminError.classList.add('hidden');
+
+    const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+
+    adminBtn.disabled = false;
+    adminBtn.textContent = 'Entrar como Admin';
+
+    if (authError) {
+      if (adminError) { adminError.textContent = authError.message; adminError.classList.remove('hidden'); }
+      return;
+    }
+
+    // Verificar que sea admin
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
+
+    if (profile?.role !== 'admin') {
+      await supabase.auth.signOut();
+      if (adminError) { adminError.textContent = 'Tu cuenta no tiene permisos de admin'; adminError.classList.remove('hidden'); }
+      return;
+    }
+
+    currentUser = user;
+    userProfile = profile;
+    appMode = 'admin';
+    document.body.classList.remove('is-guest-login');
+    await loadUserData();
+    updateAuthUI(true);
+    await navigate('home');
+  };
+}
 function renderAuthView() {
   const container = document.getElementById('view-auth');
   if (!container) return;
@@ -490,11 +806,14 @@ async function initModels() {
   setStatus('Cargando OCR PP-OCRv4...');
   const ocrLoaded = await ocr.loadModel('models/ppocr_rec.onnx', 'models/ppocr_keys.json');
 
-  setStatus('Calentando modelos...');
+    setStatus('Calentando modelos...');
   try {
     await Promise.race([
-      Promise.all([detector.warmup(), ocr.warmup()]),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
+      (async () => {
+        await detector.warmup();   // ← secuencial, no paralelo
+        await ocr.warmup();
+      })(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))
     ]);
   } catch (e) { console.warn('warmup skip:', e.message); }
 
