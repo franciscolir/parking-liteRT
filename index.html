@@ -80,10 +80,7 @@
     <!-- =============== VIEW: HOME =============== -->
     <div id="view-home" class="view active">
       <div class="home-hero">
-        <svg class="logo" viewBox="0 0 120 60" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <rect width="120" height="60" rx="8" fill="#1e3a5f"/>
-          <text x="60" y="38" font-family="monospace" font-size="28" fill="white" text-anchor="middle">ABC 123</text>
-        </svg>
+        <img class="logo" src="/images/Placa.png" alt="PlateDetect">
         <h2>PlateDetect</h2>
         <p>Lector de patentes en vivo con detección de vehículos registrados y denunciados.</p>
       </div>
@@ -241,6 +238,17 @@
         <!-- =============== VIEW: ADMIN =============== -->
     <div id="view-admin" class="view">
       <div style="height:16px"></div>
+    </div>
+
+    <!-- =============== MODAL USUARIO =============== -->
+    <div class="modal-overlay hidden" id="user-prompt">
+      <div class="modal-box">
+        <img class="modal-logo" src="/images/Placa.png" alt="PlateDetect">
+        <div class="modal-header">Identifícate</div>
+        <input id="input-user-name" placeholder="Tu nombre">
+        <button id="btn-accept-user">Entrar</button>
+        <p id="err-user" style="color:red;margin-top:4px"></p>
+      </div>
     </div>
 
     <!-- =============== TOAST =============== -->
