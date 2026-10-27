@@ -23,6 +23,77 @@ function getOfficePhone() {
 let scanHistory = JSON.parse(localStorage.getItem('plateHistory') || '[]');
 let scanCount = JSON.parse(localStorage.getItem('plateStats') || '{"total":0,"registered":0,"stolen":0,"unknown":0}');
 let contacts = JSON.parse(localStorage.getItem('contacts') || '[]');
+
+// ----- User & Admin -----
+let appUser = JSON.parse(localStorage.getItem('appUser')) || null;
+let whitelist = JSON.parse(localStorage.getItem('whitelist')) || ['admin'];
+
+function setAppUser(user){
+  appUser = user;
+  localStorage.setItem('appUser', JSON.stringify(user));
+  updateNavVisibility();
+}
+
+function updateNavVisibility(){
+  const navAuth = document.getElementById('nav-auth');
+  if(navAuth){
+    if(appUser && appUser.isAdmin) navAuth.style.display='block';
+    else navAuth.style.display='none';
+  }
+}
+
+// Active session tracking
+let activeSessions = parseInt(localStorage.getItem('activeSessions'))||0;
+activeSessions++;
+localStorage.setItem('activeSessions', activeSessions.toString());
+window.addEventListener('beforeunload',()=>{
+  activeSessions--;
+  if(activeSessions<0) activeSessions=0;
+  localStorage.setItem('activeSessions', activeSessions.toString());
+});
+
+function isUserOnWhitelist(name){
+  return whitelist.includes(name.toLowerCase());
+}
+
+/* ---------- FUNCIONES ADMIN ---------- */
+function renderAdminUsers() {
+  const list = document.getElementById('admin-user-list');
+  if (!list) return;
+  list.innerHTML = whitelist
+    .map(u => `<div>${u}${u === 'admin' ? ' <b>(Admin)</b>' : ''}</div>`)
+    .join('');
+}
+
+function updateAdminSessionCount() {
+  const span = document.getElementById('admin-active-sessions');
+  if (span) span.textContent = parseInt(localStorage.getItem('activeSessions')) || 0;
+}
+
+/* Prompt inicial de usuario */
+function promptForUser() {
+  if (appUser) return;                     // ya tenemos usuario guardado
+  const dlg = document.getElementById('user-prompt');
+  if (!dlg) return;
+  dlg.classList.remove('hidden');
+
+  const btn = document.getElementById('btn-accept-user');
+  const input = document.getElementById('input-user-name');
+  const err = document.getElementById('err-user');
+  btn.onclick = () => {
+    const name = input.value.trim();
+    if (!name) { err.textContent = 'El nombre no puede quedar vacío.'; return; }
+    if (!isUserOnWhitelist(name)) {
+      err.textContent = 'Usuario no autorizado.';
+      return;
+    }
+    const isAdmin = name.toLowerCase() === 'admin';
+    setAppUser({ name, isAdmin });
+    dlg.classList.add('hidden');
+    if (isAdmin) { renderAdminUsers(); updateAdminSessionCount(); }
+  };
+}
+
 if (!contacts.length) contacts = JSON.parse(JSON.stringify(DEFAULT_CONTACTS));
 
 let camera, detector, ocr, corrector;
@@ -522,6 +593,7 @@ window.navigate = function (view) {
   if (view === 'home') runDiagnostics();
   if (view === 'plates') renderPlatesTable();
   if (view === 'call') renderContacts();
+  if (view === 'admin') { renderAdminUsers(); updateAdminSessionCount(); }
 };
 
 window.sendWhatsApp = function () {
@@ -583,6 +655,20 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('modal-send').onclick = window.sendRegistration;
   document.getElementById('modal-overlay').onclick = function (e) { if (e.target === this) window.closeModal(); };
   updateHistory(); renderContacts(); initDB(); initModels(); runDiagnostics();
+  promptForUser();               // <‑‑ NUEVO: pide nombre al arrancar
+  // Botón “Agregar” en panel admin (delegado)
+  document.addEventListener('click', e => {
+    if (e.target.id === 'btn-add-user') {
+      const name = document.getElementById('input-new-user').value.trim().toLowerCase();
+      if (name && !whitelist.includes(name)) {
+        whitelist.push(name);
+        localStorage.setItem('whitelist', JSON.stringify(whitelist));
+        renderAdminUsers();
+        showToast('Usuario añadido a la white‑list', 'success');
+      }
+      document.getElementById('input-new-user').value = '';
+    }
+  });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
   // ---- PWA Install ----

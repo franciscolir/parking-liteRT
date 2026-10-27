@@ -172,6 +172,30 @@
       <div style="height:16px"></div>
     </div>
 
+    <!-- =============== VIEW: ADMIN =============== -->
+    <div id="view-admin" class="view">
+      <div class="view-header"><h1>Panel de administrador</h1></div>
+      <div class="card">
+        <h3>Usuarios autorizados (white‑list)</h3>
+        <div id="admin-user-list"></div>
+
+        <h3>Agregar nuevo usuario</h3>
+        <input id="input-new-user" placeholder="Nombre de usuario">
+        <button id="btn-add-user">Agregar</button>
+      </div>
+      <p>Sesiones activas: <span id="admin-active-sessions">0</span></p>
+    </div>
+
+    <!-- =============== MODAL USUARIO =============== -->
+    <div class="modal-overlay hidden" id="user-prompt">
+      <div class="modal-box">
+        <div class="modal-header">Identifícate</div>
+        <input id="input-user-name" placeholder="Tu nombre">
+        <button id="btn-accept-user">Entrar</button>
+        <p id="err-user" style="color:red;margin-top:4px"></p>
+      </div>
+    </div>
+
     <!-- =============== TOAST =============== -->
     <div class="toast" id="toast"></div>
 
