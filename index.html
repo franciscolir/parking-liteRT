@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-  <title>PlateDetect</title>
+  <title>PlateDetect1</title>
   <meta name="theme-color" content="#3b82f6">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -16,9 +16,9 @@
     <!-- =============== GLOBAL HEADER =============== -->
 <header class="app-header" id="app-header">
   <div class="app-brand">
-    <span class="app-brand-icon">🚤</span>
-    <span class="app-brand-name">PlateDetect</span>
-  </div>
+  <img src="/placa.png" alt="PlateDetect" class="app-brand-img">
+  <span class="app-brand-name">PlateDetect</span>
+</div>
   <button class="header-auth-btn" id="header-auth-btn">
     <svg viewBox="0 0 24 24" width="16" height="16">
       <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" fill="none" stroke="currentColor" stroke-width="2"/>
@@ -31,8 +31,7 @@
 <!-- =============== VIEW: GUEST LOGIN =============== -->
 <div id="view-guest-login" class="view active">
   <div class="guest-login-container">
-    <div class="guest-login-hero">
-      <div class="guest-login-icon">🚤</div>
+   <div>
       <h1>PlateDetect</h1>
       <p>Ingresa tu nombre para comenzar</p>
     </div>
@@ -79,11 +78,11 @@
 </div>
     <!-- =============== VIEW: HOME =============== -->
     <div id="view-home" class="view active">
-      <div class="home-hero">
-        <img class="logo" src="/images/Placa.png" alt="PlateDetect">
-        <h2>PlateDetect</h2>
-        <p>Lector de patentes en vivo con detección de vehículos registrados y denunciados.</p>
-      </div>
+     <div class="home-hero">
+  <img src="/placa.png" alt="PlateDetect" class="home-logo">
+  <h2>PlateDetect</h2>
+  <p>Estacionamiento Asamblea</p>
+  </div> 
 
       <button class="btn-primary" id="btn-home-scan">Iniciar escaneo</button>
       <button class="btn-secondary" id="btn-home-plates">Ver patentes registradas</button>

@@ -1639,3 +1639,61 @@ body.is-guest-login .app-header {
 .admin-tab-content:not(#admin-tab-home) .stats-grid {
   display: none;
 }
+/* Cuando estamos en guest-login, ocultar TODO excepto el login */
+body.is-guest-login .view:not(#view-guest-login) {
+  display: none !important;
+}
+
+body.is-guest-login .bottom-nav {
+  display: none !important;
+}
+
+body.is-guest-login .app-header {
+  display: none !important;
+}
+
+body.is-guest-login #install-banner {
+  display: none !important;
+}
+/* ============================ LOGO / ICONO ============================ */
+
+/* Contenedor sin fondo ni decoración — solo centra la imagen */
+.guest-login-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+  /* sin width/height fijo, se adapta a la imagen */
+}
+
+.guest-login-icon img {
+  width: 120px;           /* ← ajusta al tamaño que quieras */
+  height: auto;           /* mantiene proporción */
+  max-width: 100%;
+  object-fit: contain;
+  display: block;
+  border-radius: 0;       /* sin bordes redondeados */
+  background: transparent;/* sin fondo */
+  box-shadow: none;       /* sin sombra */
+}
+
+/* Logo del header (arriba a la izquierda) */
+.app-brand-img {
+  width: 28px;
+  height: 14px;
+  object-fit: contain;
+  border-radius: 6px;
+  flex-shrink: 0;
+   box-shadow: 0 8px 32px rgba(59,130,246,.3);
+}
+
+/* Logo del home hero */
+.home-logo {
+  width: 72px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 16px;
+  margin: 0 auto 16px;
+  display: block;
+  box-shadow: 0 8px 32px rgba(59,130,246,.3);
+}
