@@ -38,7 +38,7 @@ pnpm-debug.log*
 Thumbs.db
 
 # Env (¡NO subir credenciales!)
-#.env
+.env
 .env.local
 .env.*.local
 

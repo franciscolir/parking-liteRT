@@ -11,8 +11,8 @@
 
 // Vite expone variables de entorno con prefijo VITE_ en import.meta.env
 export const SUPABASE_CONFIG = {
-  url: import.meta.env.VITE_SUPABASE_URL || 'https://TU_PROYECTO.supabase.co',
-  anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY || 'TU_ANON_KEY_AQUI',
+  url: import.meta.env.VITE_SUPABASE_URL || 'https://ebqcsewddskmwkuclqmn.supabase.co',
+  anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_ALkNdboB0wJLUfotI5il8Q_-0pWUdze',
 };
 
 // Validación básica
