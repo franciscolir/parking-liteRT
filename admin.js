@@ -371,13 +371,12 @@ export class AdminDashboard {
             <label>Patente</label>
             <input type="text" id="admin-plate-input" placeholder="ABC123" maxlength="10" class="input-plate">
           </div>
-          <div class="form-group">
+         <div class="form-group">
             <label>Tipo</label>
             <select id="admin-plate-type">
-              <option value="registered">Registrada</option>
-              <option value="stolen">Denunciada</option>
-              <option value="wanted">Buscada</option>
-              <option value="suspicious">Sospechosa</option>
+              <option value="special_needs">Necesidades especiales</option>
+              <option value="administration">Administración</option>
+              <option value="first_aid">Primeros auxilios</option>
             </select>
           </div>
           <div class="form-group">
@@ -507,12 +506,13 @@ export class AdminDashboard {
       return;
     }
 
-    const statusMap = {
-      registered: { label: 'Registrado', cls: 'reg' },
-      stolen: { label: 'Denunciado', cls: 'stolen' },
-      unknown: { label: 'Desconocido', cls: 'unk' },
-      error: { label: 'Error', cls: 'unk' },
-    };
+ const statusMap = {
+  special_needs: { label: 'Necesidades especiales', cls: 'warn' },
+  administration: { label: 'Administración', cls: 'reg' },
+  first_aid: { label: 'Primeros auxilios', cls: 'stolen' },
+  unknown: { label: 'Desconocido', cls: 'unk' },
+  error: { label: 'Error', cls: 'unk' },
+};
 
     list.innerHTML = data.map(s => {
       const st = statusMap[s.status] || { label: s.status, cls: 'unk' };
@@ -641,12 +641,11 @@ export class AdminDashboard {
       return;
     }
 
-    const typeLabels = {
-      registered: { label: 'Registrada', cls: 'reg' },
-      stolen: { label: 'Denunciada', cls: 'stolen' },
-      wanted: { label: 'Buscada', cls: 'warn' },
-      suspicious: { label: 'Sospechosa', cls: 'unk' },
-    };
+   const typeLabels = {
+  special_needs: { label: 'Necesidades especiales', cls: 'warn' },
+  administration: { label: 'Administración', cls: 'reg' },
+  first_aid: { label: 'Primeros auxilios', cls: 'stolen' },
+};
 
     list.innerHTML = plates.map(p => {
       const t = typeLabels[p.type] || { label: p.type, cls: 'unk' };
@@ -801,12 +800,13 @@ export class AdminDashboard {
       return;
     }
 
-    const statusMap = {
-      registered: { label: 'Registrado', cls: 'reg' },
-      stolen: { label: 'Denunciado', cls: 'stolen' },
-      unknown: { label: 'Desconocido', cls: 'unk' },
-      error: { label: 'Error', cls: 'unk' },
-    };
+   const statusMap = {
+  special_needs: { label: 'Necesidades especiales', cls: 'warn' },
+  administration: { label: 'Administración', cls: 'reg' },
+  first_aid: { label: 'Primeros auxilios', cls: 'stolen' },
+  unknown: { label: 'Desconocido', cls: 'unk' },
+  error: { label: 'Error', cls: 'unk' },
+};
 
     list.innerHTML = scans.map(s => {
       const st = statusMap[s.status] || { label: s.status, cls: 'unk' };

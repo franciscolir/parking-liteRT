@@ -48,7 +48,7 @@ let userProfile = null;
 let scanHistory = [];
 let scanCount = { total: 0, registered: 0, stolen: 0, unknown: 0 };
 let contacts = [];
-let platesCache = { registered: [], stolen: [] };
+let platesCache = { special_needs: [], administration: [], first_aid: [] };
 let subscriptions = [];
 
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -265,12 +265,16 @@ function clearSubscriptions() {
 }
 
 async function refreshPlatesCache() {
-  const [reg, stolen] = await Promise.all([
-    getPlates({ type: 'registered', limit: 500 }),
-    getPlates({ type: 'stolen', limit: 500 })
+  const [specialNeeds, admin, firstAid] = await Promise.all([
+    getPlates({ type: 'special_needs', limit: 500 }),
+    getPlates({ type: 'administration', limit: 500 }),
+    getPlates({ type: 'first_aid', limit: 500 }),
   ]);
-  platesCache.registered = reg.map(p => p.plate);
-  platesCache.stolen = stolen.map(p => p.plate);
+  platesCache = {
+    special_needs: specialNeeds.map(p => p.plate),
+    administration: admin.map(p => p.plate),
+    first_aid: firstAid.map(p => p.plate),
+  };
 }
 
 // ============================================================
@@ -966,8 +970,9 @@ async function processPlate(plate) {
   }
 
   // Fallback a cache local
-  const isStolen = plateData?.type === 'stolen' || platesCache.stolen.includes(plate);
-  const isRegistered = plateData?.type === 'registered' || platesCache.registered.includes(plate);
+ const isFirstAid = platesCache.first_aid?.includes(plate);
+const isAdmin = platesCache.administration?.includes(plate);
+const isSpecialNeeds = platesCache.special_needs?.includes(plate);
 
   let st, css, ico, status;
   if (isStolen) { st = '⚠ VEHÍCULO DENUNCIADO'; css = 'danger'; ico = '🔴'; status = 'stolen'; scanCount.stolen++; }
@@ -1115,19 +1120,31 @@ function renderPlatesTable(filter) {
   const table = document.getElementById('plates-table');
   if (!table) return;
 
-  const all = [
-    ...platesCache.registered.map(p => ({ plate: p, type: 'reg' })),
-    ...platesCache.stolen.map(p => ({ plate: p, type: 'stolen' }))
-  ];
+  const typeLabels = {
+    special_needs: { label: 'Necesidades especiales', cls: 'warn' },
+    administration: { label: 'Administración', cls: 'reg' },
+    first_aid: { label: 'Primeros auxilios', cls: 'stolen' },
+  };
+
+  const all = [];
+  for (const [type, plates] of Object.entries(platesCache)) {
+    if (Array.isArray(plates)) {
+      plates.forEach(p => all.push({ plate: p, type }));
+    }
+  }
 
   const q = (filter || '').toUpperCase().trim();
   const rows = q ? all.filter(r => r.plate.includes(q)) : all;
 
-  if (!rows.length) { table.innerHTML = '<div class="plates-empty">Sin resultados</div>'; return; }
+  if (!rows.length) {
+    table.innerHTML = '<div class="plates-empty">Sin resultados</div>';
+    return;
+  }
 
-  table.innerHTML = rows.map(r =>
-    `<div class="plate-row"><span class="plate-row-plate">${r.plate}</span><span class="plate-row-badge ${r.type}">${r.type === 'reg' ? 'Registrada' : 'Denunciada'}</span></div>`
-  ).join('');
+  table.innerHTML = rows.map(r => {
+    const t = typeLabels[r.type] || { label: r.type, cls: 'unk' };
+    return `<div class="plate-row"><span class="plate-row-plate">${r.plate}</span><span class="plate-row-badge ${t.cls}">${t.label}</span></div>`;
+  }).join('');
 }
 
 // ============================================================

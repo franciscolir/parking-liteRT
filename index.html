@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-  <title>PlateDetect1</title>
+  <title>Estacionamiento</title>
   <meta name="theme-color" content="#3b82f6">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -16,8 +16,8 @@
     <!-- =============== GLOBAL HEADER =============== -->
 <header class="app-header" id="app-header">
   <div class="app-brand">
-  <img src="/placa.png" alt="PlateDetect" class="app-brand-img">
-  <span class="app-brand-name">PlateDetect</span>
+
+  <span class="app-brand-name">Estacionamiento</span>
 </div>
   <button class="header-auth-btn" id="header-auth-btn">
     <svg viewBox="0 0 24 24" width="16" height="16">
@@ -31,18 +31,22 @@
 <!-- =============== VIEW: GUEST LOGIN =============== -->
 <div id="view-guest-login" class="view active">
   <div class="guest-login-container">
-   <div>
-      <h1>PlateDetect</h1>
-      <p>Ingresa tu nombre para comenzar</p>
+
+    <!-- Logo + título -->
+    <div class="guest-login-hero">
+     
+      <h1>Estacionamiento</h1>
+      <p>Asamblea Regional Curico|2026</p>
     </div>
 
+    <!-- Formulario guest -->
     <form class="guest-login-form" id="guest-login-form" onsubmit="event.preventDefault()">
       <div class="form-group">
-        <label for="guest-name">Nombre</label>
+        <label for="guest-name"></label>
         <input
           type="text"
           id="guest-name"
-          placeholder="Ej: Guardia 1"
+          placeholder="Ingresa tu nombre para comenzar"
           maxlength="32"
           autocomplete="off"
           autofocus
@@ -54,13 +58,12 @@
       </button>
     </form>
 
+    <!-- Link admin -->
     <div class="guest-login-footer">
-      <button class="btn-link" id="guest-admin-toggle">
-        🔐 Acceso Admin
-      </button>
+      <button class="btn-link" id="guest-admin-toggle">🔐 Acceso Admin</button>
     </div>
 
-    <!-- Form de admin (oculto por defecto) -->
+    <!-- Formulario admin (oculto) -->
     <div class="guest-admin-form hidden" id="guest-admin-form">
       <div class="form-group">
         <label>Email</label>
@@ -74,15 +77,16 @@
       <button type="button" class="btn-primary btn-full" id="guest-admin-btn">Entrar como Admin</button>
       <button type="button" class="btn-link" id="guest-admin-back">← Volver</button>
     </div>
+
   </div>
 </div>
     <!-- =============== VIEW: HOME =============== -->
-    <div id="view-home" class="view active">
-     <div class="home-hero">
-  <img src="/placa.png" alt="PlateDetect" class="home-logo">
-  <h2>PlateDetect</h2>
-  <p>Estacionamiento Asamblea</p>
-  </div> 
+    <div id="view-home" class="view">
+      <div class="home-hero">
+        <img src="/plate-icon.png" alt="PlateDetect" class="home-logo">
+        <h2>Estacionamiento</h2>
+        <p>Asamblea Regional Curico|2026</p>
+      </div>
 
       <button class="btn-primary" id="btn-home-scan">Iniciar escaneo</button>
       <button class="btn-secondary" id="btn-home-plates">Ver patentes registradas</button>
@@ -242,7 +246,7 @@
     <!-- =============== MODAL USUARIO =============== -->
     <div class="modal-overlay hidden" id="user-prompt">
       <div class="modal-box">
-        <img class="modal-logo" src="/images/Placa.png" alt="PlateDetect">
+        
         <div class="modal-header">Identifícate</div>
         <input id="input-user-name" placeholder="Tu nombre">
         <button id="btn-accept-user">Entrar</button>
@@ -257,7 +261,7 @@
     <div class="install-banner hidden" id="install-banner">
       <div class="install-icon">&#9889;</div>
       <div class="install-text">
-        <div class="install-title">Instala PlateDetect</div>
+        <div class="install-title">Instala App</div>
         <div class="install-desc">Acceso rápido desde tu pantalla de inicio</div>
       </div>
       <button class="install-btn" id="install-btn">Instalar</button>
