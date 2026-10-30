@@ -3,7 +3,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
   root: '.',
-  publicDir: 'public',
+   base: '/parking-liteRT/',
   base: './',
   server: {
     port: 3000,
