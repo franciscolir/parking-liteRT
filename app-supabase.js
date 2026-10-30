@@ -74,23 +74,17 @@ document.addEventListener('DOMContentLoaded', async function () {
       userProfile = null;
       appMode = 'unknown';
       updateAuthUI(false);
-      // Si no hay guest, ir a login
       if (!guestSession) {
         navigate('guest-login');
       }
     }
   });
 
-  // Iniciar auth (admin o guest o login)
+  // ⚡ IMPORTANTE: llamar a initAuth
   await initAuth();
 
-  // Inicializar modelos IA
   initModels();
-
-  // Diagnósticos iniciales
   runDiagnostics();
-
-  // PWA Install
   setupPWAInstall();
 });
 
@@ -489,7 +483,7 @@ async function performLogout() {
   scanHistory = [];
   scanCount = { total: 0, registered: 0, stolen: 0, unknown: 0 };
   contacts = [];
-  platesCache = { registered: [], stolen: [] };
+  platesCache = { special_needs: [], administration: [], first_aid: [] };   // ← FIX
   clearSubscriptions();
 
   // Detener cámara
@@ -502,9 +496,9 @@ async function performLogout() {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
 
-  // Ir a home o guest-login
-  const hasNoSession = !currentUser && !guestSession;
-  await navigate('home');
+  // Ir a login (no a home, porque home es protegida)
+  document.body.classList.add('is-guest-login');
+  await navigate('guest-login');
 
   showToast('Sesión cerrada', 'success');
 }
@@ -579,6 +573,8 @@ async function renderProfileView() {
 // VISTA: AUTH (LOGIN/REGISTER)
 // ============================================================
 async function renderGuestLogin() {
+  console.log('[GuestLogin] renderGuestLogin() INICIADO');
+
   const form = document.getElementById('guest-login-form');
   const input = document.getElementById('guest-name');
   const error = document.getElementById('guest-login-error');
@@ -587,20 +583,29 @@ async function renderGuestLogin() {
   const adminForm = document.getElementById('guest-admin-form');
   const adminBtn = document.getElementById('guest-admin-btn');
   const adminBack = document.getElementById('guest-admin-back');
+  const adminError = document.getElementById('guest-admin-error');   // ← FALTABA
 
-  if (!form) return;
+  if (!form) {
+    console.error('[GuestLogin] No existe #guest-login-form');
+    return;
+  }
 
-  // Ocultar nav
+  // Asegurar que el body tenga la clase
   document.body.classList.add('is-guest-login');
 
   // Reset
   if (input) { input.value = ''; input.focus(); }
   if (error) error.classList.add('hidden');
   if (adminForm) adminForm.classList.add('hidden');
+  if (adminError) adminError.classList.add('hidden');
+  form.style.display = 'block';
 
-  // Submit login flotante
+  // ============================================================
+  // 1. SUBMIT DEL FORM (login guest)
+  // ============================================================
   form.onsubmit = async (e) => {
     e.preventDefault();
+    console.log('[GuestLogin] Submit');
     const name = input?.value.trim();
     if (!name) {
       if (error) { error.textContent = 'Ingresa un nombre'; error.classList.remove('hidden'); }
@@ -627,63 +632,74 @@ async function renderGuestLogin() {
     updateAuthUI(false);
     await navigate('home');
   };
+  console.log('[GuestLogin] ✅ form.onsubmit enganchado');
 
-  // Toggle admin form
-  adminToggle.onclick = () => {
-    adminForm.classList.remove('hidden');
-    form.style.display = 'none';
-    document.getElementById('guest-admin-email')?.focus();
-  };
+  // ============================================================
+  // 2. TOGGLE ADMIN
+  // ============================================================
+  if (adminToggle) {
+    adminToggle.onclick = () => {
+      console.log('[GuestLogin] Toggle admin');
+      if (adminForm) adminForm.classList.remove('hidden');
+      form.style.display = 'none';
+      document.getElementById('guest-admin-email')?.focus();
+    };
+  }
 
-  adminBack.onclick = () => {
-    adminForm.classList.add('hidden');
-    form.style.display = 'block';
-    input?.focus();
-  };
+  if (adminBack) {
+    adminBack.onclick = () => {
+      if (adminForm) adminForm.classList.add('hidden');
+      form.style.display = 'block';
+      input?.focus();
+    };
+  }
 
-  // Login admin
-  adminBtn.onclick = async () => {
-    const email = document.getElementById('guest-admin-email')?.value.trim();
-    const password = document.getElementById('guest-admin-password')?.value;
-    const adminError = document.getElementById('guest-admin-error');
+  // ============================================================
+  // 3. LOGIN ADMIN
+  // ============================================================
+  if (adminBtn) {
+    adminBtn.onclick = async () => {
+      const email = document.getElementById('guest-admin-email')?.value.trim();
+      const password = document.getElementById('guest-admin-password')?.value;
+      if (!email || !password) {
+        if (adminError) { adminError.textContent = 'Completa email y contraseña'; adminError.classList.remove('hidden'); }
+        return;
+      }
 
-    if (!email || !password) {
-      if (adminError) { adminError.textContent = 'Completa email y contraseña'; adminError.classList.remove('hidden'); }
-      return;
-    }
+      adminBtn.disabled = true;
+      adminBtn.textContent = 'Entrando...';
+      if (adminError) adminError.classList.add('hidden');
 
-    adminBtn.disabled = true;
-    adminBtn.textContent = 'Entrando...';
-    if (adminError) adminError.classList.add('hidden');
+      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
 
-    const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      adminBtn.disabled = false;
+      adminBtn.textContent = 'Entrar como Admin';
 
-    adminBtn.disabled = false;
-    adminBtn.textContent = 'Entrar como Admin';
+      if (authError) {
+        if (adminError) { adminError.textContent = authError.message; adminError.classList.remove('hidden'); }
+        return;
+      }
 
-    if (authError) {
-      if (adminError) { adminError.textContent = authError.message; adminError.classList.remove('hidden'); }
-      return;
-    }
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
 
-    // Verificar que sea admin
-    const { data: { user } } = await supabase.auth.getUser();
-    const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
+      if (profile?.role !== 'admin') {
+        await supabase.auth.signOut();
+        if (adminError) { adminError.textContent = 'Tu cuenta no tiene permisos de admin'; adminError.classList.remove('hidden'); }
+        return;
+      }
 
-    if (profile?.role !== 'admin') {
-      await supabase.auth.signOut();
-      if (adminError) { adminError.textContent = 'Tu cuenta no tiene permisos de admin'; adminError.classList.remove('hidden'); }
-      return;
-    }
+      currentUser = user;
+      userProfile = profile;
+      appMode = 'admin';
+      document.body.classList.remove('is-guest-login');
+      await loadUserData();
+      updateAuthUI(true);
+      await navigate('home');
+    };
+  }
 
-    currentUser = user;
-    userProfile = profile;
-    appMode = 'admin';
-    document.body.classList.remove('is-guest-login');
-    await loadUserData();
-    updateAuthUI(true);
-    await navigate('home');
-  };
+  console.log('[GuestLogin] renderGuestLogin() COMPLETADO');
 }
 function renderAuthView() {
   const container = document.getElementById('view-auth');
@@ -970,29 +986,38 @@ async function processPlate(plate) {
   }
 
   // Fallback a cache local
- const isFirstAid = platesCache.first_aid?.includes(plate);
-const isAdmin = platesCache.administration?.includes(plate);
-const isSpecialNeeds = platesCache.special_needs?.includes(plate);
+  const isFirstAid = platesCache.first_aid?.includes(plate);
+  const isAdmin = platesCache.administration?.includes(plate);
+  const isSpecialNeeds = platesCache.special_needs?.includes(plate);
 
   let st, css, ico, status;
-  if (isStolen) { st = '⚠ VEHÍCULO DENUNCIADO'; css = 'danger'; ico = '🔴'; status = 'stolen'; scanCount.stolen++; }
-  else if (isRegistered) { st = '✓ Vehículo registrado'; css = 'success'; ico = '🟢'; status = 'registered'; scanCount.registered++; }
-  else { st = '⚠ No registrado'; css = 'warning'; ico = '🔴'; status = 'unknown'; scanCount.unknown++; }
-  scanCount.total++;
+  if (isFirstAid || plateData?.type === 'first_aid') {
+    st = '🚑 PRIMEROS AUXILIOS'; css = 'danger'; ico = '🚑'; status = 'first_aid';
+    scanCount.stolen = (scanCount.stolen || 0) + 1;
+  } else if (isAdmin || plateData?.type === 'administration') {
+    st = '🏢 ADMINISTRACIÓN'; css = 'success'; ico = '🏢'; status = 'administration';
+    scanCount.registered = (scanCount.registered || 0) + 1;
+  } else if (isSpecialNeeds || plateData?.type === 'special_needs') {
+    st = '♿ NECESIDADES ESPECIALES'; css = 'warning'; ico = '♿'; status = 'special_needs';
+    scanCount.unknown = (scanCount.unknown || 0) + 1;
+  } else {
+    st = '⚠ NO REGISTRADO'; css = 'warning'; ico = '🔴'; status = 'unknown';
+    scanCount.unknown = (scanCount.unknown || 0) + 1;
+  }
+  scanCount.total = (scanCount.total || 0) + 1;
 
   // Guardar en Supabase
   try {
     await saveScan({
       plate,
       status,
-      confidence: 0.9, // TODO: obtener del detector
+      confidence: 0.9,
       raw_ocr_text: lastRawText,
       corrected_text: lastCorrected,
       detection_box: lastPlateBox
     });
   } catch (e) {
     console.warn('Error guardando scan:', e);
-    // Fallback localStorage
     scanHistory.unshift({ plate, status: css, time: Date.now() });
     if (scanHistory.length > 20) scanHistory.pop();
     localStorage.setItem('plateHistory', JSON.stringify(scanHistory));
@@ -1021,7 +1046,7 @@ function updateHistory() {
   list.innerHTML = scanHistory.slice(0, 10).map(h => {
     const sc = h.status === 'success' ? 'reg' : h.status === 'danger' ? 'stolen' : 'unk';
     const st = h.status === 'success' ? 'Registrado' : h.status === 'danger' ? 'Denunciado' : 'Desconocido';
-    const isReg = platesCache.registered.includes(h.plate);
+    const isReg = platesCache.administration?.includes(h.plate) || platesCache.special_needs?.includes(h.plate) || platesCache.first_aid?.includes(h.plate);
     const clickHandler = isReg ? '' : ` onclick="requestRegistration('${h.plate}')"`;
     const cls = isReg ? '' : ' clickable';
     return `<div class="history-item${cls}"${clickHandler}><span class="h-plate">${h.plate}</span><span class="h-status ${sc}">${st}</span></div>`;
@@ -1101,7 +1126,7 @@ window.sendRegistration = async function () {
   try {
     await reportPlate({
       plate,
-      type: 'registered',
+      type: 'special_needs',   // ← default
       owner_name: name,
       vehicle_type: 'otro'
     });
@@ -1378,3 +1403,10 @@ function setupPWAInstall() {
   installClose.onclick = () => { installBanner.classList.add('hidden'); deferredPrompt = null; };
   window.addEventListener('appinstalled', () => { installBanner.classList.add('hidden'); deferredPrompt = null; });
 }
+// ============================================================
+// EXPONER PARA DEBUGGING
+// ============================================================
+window.supabase = supabase;
+window.guestAuth = guestAuth;
+window.renderGuestLogin = renderGuestLogin;
+window.navigate = navigate;
