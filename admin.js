@@ -103,7 +103,6 @@ export class AdminDashboard {
     const input = document.getElementById('admin-access-name');
     if (!modal) { console.error('[Admin] modal no encontrado'); return; }
     modal.classList.remove('hidden');
-    modal.style.display = 'flex';
     if (input) {
       input.value = '';
       setTimeout(() => input.focus(), 100);
@@ -140,7 +139,6 @@ export class AdminDashboard {
     const modal = document.getElementById('admin-access-modal');
     if (modal) {
       modal.classList.add('hidden');
-      modal.style.display = 'none';
     }
 
     await this.loadWhitelist();
@@ -426,7 +424,6 @@ export class AdminDashboard {
       }
       if (el) {
         el.classList.add('hidden');
-        el.style.display = 'none';
       }
     });
   }
