@@ -11,6 +11,6 @@
 // Ver .env.example para la referencia de secrets.
 // ============================================================
 globalThis.__APP_CONFIG__ = {
-  supabaseUrl: 'https://TU_PROYECTO.supabase.co',
-  supabaseAnonKey: 'TU_ANON_KEY',
+  supabaseUrl: 'https://ebqcsewddskmwkuclqmn.supabase.co',
+  supabaseAnonKey: 'sb_publishable_RpzHweo8n9pfd3GFbgmdgQ_Fbb3w1zt',
 };

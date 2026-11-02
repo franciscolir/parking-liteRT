@@ -25,6 +25,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Node estable para los chequeos de sintaxis (node --check).
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       # Si faltan los secrets, quedarían los placeholders y publicaríamos
       # un sitio que no conecta con Supabase. Fallar acá es mejor que
       # romper en vivo.
@@ -44,18 +50,41 @@ jobs:
 
       # config.js es un script clásico que index.html carga antes del módulo
       # ES y que define globalThis.__APP_CONFIG__ (ver supabase-config.js).
+      #
+      # OJO: un secret pegado con salto de línea final genera un string
+      # multilínea => SyntaxError => config.js no se ejecuta y la app
+      # arranca SIN configuración (parece que "no conecta con Supabase").
+      # Por eso se limpian los valores y se valida el archivo generado.
       - name: Generar config.js desde secrets
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
+          URL=$(printf '%s' "$VITE_SUPABASE_URL" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          KEY=$(printf '%s' "$VITE_SUPABASE_ANON_KEY" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "::error::Los secrets de Supabase están vacíos"
+            exit 1
+          fi
+          case "$URL" in
+            https://*.supabase.co) ;;
+            *) echo "::error::VITE_SUPABASE_URL no parece una URL de Supabase: '$URL'"; exit 1 ;;
+          esac
+
           cat > config.js <<EOF
           // Generado por .github/workflows/deploy.yml — no editar a mano en CI.
           globalThis.__APP_CONFIG__ = {
-            supabaseUrl: '${VITE_SUPABASE_URL}',
-            supabaseAnonKey: '${VITE_SUPABASE_ANON_KEY}',
+            supabaseUrl: '${URL}',
+            supabaseAnonKey: '${KEY}',
           };
           EOF
+
+          # Si el JS generado tiene un error de sintaxis, la app no arranca
+          # bien. Fallar acá es mejor que publicar la app rota.
+          # (--input-type=module: el archivo se parsea como módulo ES, que es
+          #  como lo carga el navegador)
+          node --input-type=module --check < config.js
 
       - name: Armar sitio estático
         run: |
@@ -76,6 +105,15 @@ jobs:
                    site/models/yolov8_plate.onnx site/models/ppocr_rec.onnx \
                    site/manifest.json; do
             if [ ! -f "$f" ]; then echo "::error::Falta $f en el sitio"; exit 1; fi
+          done
+
+          # Ningún JS publicado puede tener errores de sintaxis: en el
+          # navegador un error de sintaxis en un módulo aborta toda la app.
+          for f in site/*.js site/vendor/*.js site/vendor/*.mjs; do
+            if ! node --input-type=module --check < "$f"; then
+              echo "::error::Error de sintaxis en $f"
+              exit 1
+            fi
           done
 
       # Sin build no hay hashes por archivo: el Service Worker se versiona
