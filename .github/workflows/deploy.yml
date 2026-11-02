@@ -31,6 +31,22 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
+      # Si faltan los secrets, el build saldría con placeholders y publicaríamos
+      # un sitio que no conecta con Supabase. Fallar acá es mejor que romper en vivo.
+      - name: Verificar secrets
+        run: |
+          fail=0
+          for v in VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Falta el secret $v — crearlo en Settings → Secrets and variables → Actions"
+              fail=1
+            fi
+          done
+          exit $fail
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
       # Vite inyecta import.meta.env.VITE_* en tiempo de build.
       # Las variables definidas con `env:` a nivel de step tienen prioridad
       # sobre las del archivo .env. GitHub enmascara automáticamente los
