@@ -7,9 +7,15 @@
   <meta name="theme-color" content="#3b82f6">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <link rel="icon" type="image/svg+xml" href="icon-192.svg">
-  <link rel="apple-touch-icon" href="icon-192.svg">
-  <link rel="stylesheet" href="style.css">
+  <link rel="icon" type="image/svg+xml" href="./icon-192.svg">
+  <link rel="apple-touch-icon" href="./icon-192.svg">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="./style.css">
+  <!-- Config + librerías de terceros como scripts clásicos: se ejecutan ANTES
+       del módulo ES (los module son defer por defecto) -->
+  <script src="./config.js"></script>
+  <script src="./vendor/supabase.js"></script>
 </head>
 <body>
   <div id="app">
@@ -83,7 +89,7 @@
     <!-- =============== VIEW: HOME =============== -->
     <div id="view-home" class="view">
       <div class="home-hero">
-        <img src="/plate-icon.png" alt="PlateDetect" class="home-logo">
+        <img src="./plate-icon.png" alt="PlateDetect" class="home-logo">
         <h2>Estacionamiento</h2>
         <p>Asamblea Regional Curico|2026</p>
       </div>
@@ -314,7 +320,7 @@
     </nav>
   </div>
 
-  <!-- Entry point - Vite maneja los módulos ES -->
-  <script type="module" src="/main.js"></script>
+  <!-- Entry point - módulo ES nativo (sin bundler) -->
+  <script type="module" src="./main.js"></script>
 </body>
 </html>

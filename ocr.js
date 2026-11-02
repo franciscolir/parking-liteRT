@@ -1,4 +1,4 @@
-import * as ort from 'onnxruntime-web';
+import { ort } from './vendor/ort-setup.js';
 
 export class PlateOCR {
   constructor() {

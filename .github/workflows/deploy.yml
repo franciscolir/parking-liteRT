@@ -1,5 +1,9 @@
 name: Deploy to GitHub Pages
 
+# SIN BUILD: el sitio es el código fuente (HTML/CSS/JS puros + ./vendor).
+# Este workflow solo inyecta los secrets de Supabase en config.js y arma
+# la carpeta site/ que se publica en Pages.
+
 on:
   push:
     branches: [master]
@@ -21,18 +25,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      # msw@3 pide vite>=6 y el proyecto usa vite@5, por eso --legacy-peer-deps
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps
-
-      # Si faltan los secrets, el build saldría con placeholders y publicaríamos
-      # un sitio que no conecta con Supabase. Fallar acá es mejor que romper en vivo.
+      # Si faltan los secrets, quedarían los placeholders y publicaríamos
+      # un sitio que no conecta con Supabase. Fallar acá es mejor que
+      # romper en vivo.
       - name: Verificar secrets
         run: |
           fail=0
@@ -47,15 +42,55 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
-      # Vite inyecta import.meta.env.VITE_* en tiempo de build.
-      # Las variables definidas con `env:` a nivel de step tienen prioridad
-      # sobre las del archivo .env. GitHub enmascara automáticamente los
-      # valores de secrets en los logs.
-      - name: Build
-        run: npm run build
+      # config.js es un script clásico que index.html carga antes del módulo
+      # ES y que define globalThis.__APP_CONFIG__ (ver supabase-config.js).
+      - name: Generar config.js desde secrets
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          cat > config.js <<EOF
+          // Generado por .github/workflows/deploy.yml — no editar a mano en CI.
+          globalThis.__APP_CONFIG__ = {
+            supabaseUrl: '${VITE_SUPABASE_URL}',
+            supabaseAnonKey: '${VITE_SUPABASE_ANON_KEY}',
+          };
+          EOF
+
+      - name: Armar sitio estático
+        run: |
+          rm -rf site
+          mkdir site
+          cp index.html style.css sw.js site/
+          cp *.js site/                # módulos ES de la app + config.js
+          cp -r vendor site/vendor      # supabase.js + onnxruntime (sin el wasm)
+          cp -r public/. site/          # modelos ONNX, iconos, manifest, etc.
+
+          # Smoke checks: nada de placeholders ni archivos faltantes
+          if grep -q 'TU_PROYECTO' site/config.js; then
+            echo "::error::config.js quedó con placeholders: los secrets no se inyectaron"
+            exit 1
+          fi
+          for f in site/index.html site/main.js site/sw.js site/style.css \
+                   site/vendor/supabase.js site/vendor/ort.all.bundle.min.mjs \
+                   site/models/yolov8_plate.onnx site/models/ppocr_rec.onnx \
+                   site/manifest.json; do
+            if [ ! -f "$f" ]; then echo "::error::Falta $f en el sitio"; exit 1; fi
+          done
+
+      # Sin build no hay hashes por archivo: el Service Worker se versiona
+      # con un hash de todo el sitio. Cualquier cambio publicado altera los
+      # bytes de sw.js → el navegador instala el SW nuevo → precachea en un
+      # caché con nombre distinto y borra el anterior (sin versiones mezcladas).
+      - name: Versionar el Service Worker (hash del sitio)
+        run: |
+          HASH=$(find site -type f -print0 | sort -z | xargs -0 md5sum | md5sum | cut -c1-12)
+          sed -i "s/^const VERSION = .*$/const VERSION = 'v-${HASH}';/" site/sw.js
+          if ! grep -q "const VERSION = 'v-${HASH}'" site/sw.js; then
+            echo "::error::No se pudo inyectar VERSION en site/sw.js"
+            exit 1
+          fi
+          echo "Service Worker version: v-${HASH}"
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -63,7 +98,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: site
 
   deploy:
     needs: build

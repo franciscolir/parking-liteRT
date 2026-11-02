@@ -29,10 +29,8 @@ export default defineConfig({
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
-    env: {
-      VITE_SUPABASE_URL: 'https://test.supabase.co',
-      VITE_SUPABASE_ANON_KEY: 'test-key',
-    },
+    // Sin build: el sitio se sirve tal cual desde la raíz. La config de
+    // Supabase vive en config.js (ver supabase-config.js).
   },
   expect: {
     toHaveScreenshot: { maxDiffPixels: 100 },

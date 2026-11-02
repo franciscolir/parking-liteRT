@@ -1,0 +1,9 @@
+# Archivos vendorizados: copias exactas de node_modules.
+# -text = Git NO debe convertir los finales de línea (si los convierte,
+# el archivo deja de ser idéntico al original y cambia su hash).
+vendor/** -text
+
+# Binarios (modelos ONNX, imágenes)
+*.onnx binary
+*.png binary
+*.wasm binary

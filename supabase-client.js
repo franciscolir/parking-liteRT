@@ -3,8 +3,15 @@
  * Configuración y helpers de base de datos
  */
 
-import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_CONFIG } from './supabase-config.js';
+import { normalizePlate } from './validator.js';
+
+// supabase-js viene como script UMD clásico (vendor/supabase.js) y se carga en
+// index.html ANTES del módulo ES, así que globalThis.supabase ya existe acá.
+const { createClient } = globalThis.supabase || {};
+if (typeof createClient !== 'function') {
+  throw new Error('[Supabase] globalThis.supabase no existe: falta <script src="./vendor/supabase.js"> en index.html');
+}
 
 export const supabase = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey, {
   auth: {
@@ -81,6 +88,32 @@ export async function getPlates({ type, search, limit = 100, offset = 0 } = {}) 
   if (search) query = query.ilike('plate', `%${search.toUpperCase()}%`);
 
   const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+/**
+ * Busca qué de las patentes indicadas ya existen en la base de datos.
+ * Se usa en el ingreso masivo por texto para marcar "Ya existente".
+ * Devuelve [{ plate, type, is_active }] solo con las que coinciden.
+ *
+ * @param {Array<string|{plate:string}>} plates
+ * @returns {Promise<Array<{plate:string,type:string,is_active:boolean}>>}
+ */
+export async function findExistingPlates(plates = []) {
+  const list = [...new Set(
+    (plates || [])
+      .map(p => normalizePlate(typeof p === 'string' ? p : p?.plate || ''))
+      .filter(Boolean)
+  )];
+
+  if (!list.length) return [];
+
+  const { data, error } = await supabase
+    .from('plates')
+    .select('plate,type,is_active')
+    .in('plate', list);
+
   if (error) throw error;
   return data || [];
 }

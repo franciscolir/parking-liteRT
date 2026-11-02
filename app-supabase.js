@@ -3,6 +3,7 @@ import { Camera } from './camera.js';
 import { PlateDetector } from './detector.js';
 import { PlateOCR } from './ocr.js';
 import { validatePlate, normalizePlate } from './validator.js';
+import { TYPE_LABELS } from './plate-types.js';
 import { Corrector } from './corrector.js';
 import { AdminDashboard } from './admin.js';
 import {
@@ -1145,11 +1146,7 @@ function renderPlatesTable(filter) {
   const table = document.getElementById('plates-table');
   if (!table) return;
 
-  const typeLabels = {
-    special_needs: { label: 'Necesidades especiales', cls: 'warn' },
-    administration: { label: 'Administración', cls: 'reg' },
-    first_aid: { label: 'Primeros auxilios', cls: 'stolen' },
-  };
+  const typeLabels = TYPE_LABELS;
 
   const all = [];
   for (const [type, plates] of Object.entries(platesCache)) {
@@ -1406,7 +1403,10 @@ function setupPWAInstall() {
 // ============================================================
 // EXPONER PARA DEBUGGING
 // ============================================================
-window.supabase = supabase;
+// Ojo: `window.supabase` lo ocupa el namespace del bundle UMD
+// (vendor/supabase.js) y supabase-client.js necesita que exista
+// al importarse, así que el cliente se expone con otro nombre.
+window.supabaseClient = supabase;
 window.guestAuth = guestAuth;
 window.renderGuestLogin = renderGuestLogin;
 window.navigate = navigate;

@@ -8,7 +8,9 @@
  *   - Políticas RLS configuradas (ver setup.sql)
  */
 
-import { supabase } from './supabase-client.js';
+import { supabase, findExistingPlates } from './supabase-client.js';
+import { BulkPlateSession, bulkRowStatus, insertBulkPlates } from './bulk-plates.js';
+import { PLATE_TYPES, TYPE_LABELS, REVIEW_LABEL, getTypeLabel } from './plate-types.js';
 
 const PAGE_SIZE = 20;
 
@@ -20,6 +22,7 @@ export class AdminDashboard {
     this.scansCache = [];
     this.searchTimeout = null;
     this.currentUser = null;
+    this.bulkSession = new BulkPlateSession();
   }
   // ============================================================
   // ACCESS (whitelist + sesiones)
@@ -249,6 +252,10 @@ export class AdminDashboard {
           <svg viewBox="0 0 24 24" width="16" height="16"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 10h2M11 10h2M15 10h2M7 14h10" stroke="currentColor" stroke-width="2"/></svg>
           Patentes
         </button>
+        <button class="admin-tab" data-tab="bulk">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 4h16v16H4z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 9h8M8 13h8M8 17h5" stroke="currentColor" stroke-width="2"/></svg>
+          Ingreso masivo
+        </button>
         <button class="admin-tab" data-tab="scans">
           <svg viewBox="0 0 24 24" width="16" height="16"><path d="M3 3v18h18" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 14l4-4 4 4 5-5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
           Escaneos
@@ -306,6 +313,58 @@ export class AdminDashboard {
           </select>
         </div>
         <div id="admin-plates-list" class="admin-list"></div>
+      </div>
+
+      <!-- ============ TAB: INGRESO MASIVO POR TEXTO ============ -->
+      <div class="admin-tab-content" id="admin-tab-bulk">
+        <div class="bulk-header">
+          <h2>📋 Ingreso masivo por texto</h2>
+          <p class="bulk-hint">
+            Pega uno o varios mensajes de WhatsApp. El sistema analiza el texto,
+            extrae las patentes y muestra una tabla editable.
+            <strong>Nada se guarda hasta que revises y confirmes.</strong>
+          </p>
+        </div>
+
+        <div class="bulk-input-box">
+          <textarea
+            id="bulk-text"
+            class="bulk-textarea"
+            rows="8"
+            spellcheck="false"
+            placeholder="Ej: Buenos días, para hoy ingresan:&#10;ABCD12 visita&#10;BCDF34 proveedor&#10;También viene el vehículo patente AB-CD-13."
+          ></textarea>
+          <div class="bulk-input-actions">
+            <button class="btn-primary btn-small" id="bulk-analyze">🔍 Analizar texto</button>
+            <button class="btn-secondary btn-small" id="bulk-clear">Limpiar</button>
+          </div>
+        </div>
+
+        <div class="bulk-results hidden" id="bulk-results">
+          <div class="bulk-summary" id="bulk-summary"></div>
+
+          <div class="bulk-table-wrap">
+            <table class="bulk-table">
+              <thead>
+                <tr>
+                  <th>Patente</th>
+                  <th>Tipo</th>
+                  <th>Texto detectado</th>
+                  <th>Estado</th>
+                  <th class="bulk-th-actions"></th>
+                </tr>
+              </thead>
+              <tbody id="bulk-table-body"></tbody>
+            </table>
+          </div>
+
+          <div class="bulk-errors hidden" id="bulk-errors"></div>
+
+          <div class="bulk-table-actions">
+            <button class="btn-secondary btn-small" id="bulk-add-row">+ Agregar patente</button>
+            <button class="btn-primary btn-small" id="bulk-save" disabled>💾 Guardar patentes</button>
+          </div>
+        </div>
       </div>
 
       <!-- ============ TAB: SCANS ============ -->
@@ -504,9 +563,7 @@ export class AdminDashboard {
     }
 
  const statusMap = {
-  special_needs: { label: 'Necesidades especiales', cls: 'warn' },
-  administration: { label: 'Administración', cls: 'reg' },
-  first_aid: { label: 'Primeros auxilios', cls: 'stolen' },
+  ...TYPE_LABELS,
   unknown: { label: 'Desconocido', cls: 'unk' },
   error: { label: 'Error', cls: 'unk' },
 };
@@ -638,11 +695,7 @@ export class AdminDashboard {
       return;
     }
 
-   const typeLabels = {
-  special_needs: { label: 'Necesidades especiales', cls: 'warn' },
-  administration: { label: 'Administración', cls: 'reg' },
-  first_aid: { label: 'Primeros auxilios', cls: 'stolen' },
-};
+   const typeLabels = TYPE_LABELS;
 
     list.innerHTML = plates.map(p => {
       const t = typeLabels[p.type] || { label: p.type, cls: 'unk' };
@@ -753,6 +806,335 @@ export class AdminDashboard {
   }
 
   // ============================================================
+  // INGRESO MASIVO POR TEXTO
+  // ============================================================
+
+  /**
+   * Analiza el texto pegado. NO escribe nada en la base de datos:
+   * solo arma la tabla de revisión.
+   */
+  async analyzeBulkText() {
+    const input = document.getElementById('bulk-text');
+    const text = input?.value || '';
+
+    if (!text.trim()) {
+      this.toast('Pega el texto a analizar', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('bulk-analyze');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Analizando...';
+    }
+
+    try {
+      // 1) Análisis (100% local, no toca la base)
+      this.bulkSession.analyze(text, []);
+
+      // 2) Ver contra la base cuáles ya existen
+      const plates = this.bulkSession.rows.map(r => r.plate);
+      if (plates.length) {
+        try {
+          const existing = await findExistingPlates(plates);
+          this.bulkSession.setExistingPlates(existing);
+        } catch (e) {
+          console.warn('[Admin] no se pudieron verificar las existentes:', e);
+          this.toast('No se pudo verificar si ya existen: ' + e.message, 'error');
+        }
+      }
+
+      // 3) Mostrar resultados para revisión
+      this.renderBulkTable();
+      this.hideBulkErrors();
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '🔍 Analizar texto';
+      }
+    }
+  }
+
+  /** Dibuja la tabla de resultados. */
+  renderBulkTable() {
+    const body = document.getElementById('bulk-table-body');
+    const results = document.getElementById('bulk-results');
+    const session = this.bulkSession;
+    if (!body) return;
+
+    if (results) results.classList.toggle('hidden', !session.analyzed);
+
+    if (!session.rows.length) {
+      body.innerHTML = `<tr><td colspan="5" class="bulk-empty">${
+        session.analyzed ? 'No se encontraron patentes en el texto' : ''
+      }</td></tr>`;
+      this.updateBulkSummary();
+      return;
+    }
+
+    body.innerHTML = session.rows.map(row => this.bulkRowHtml(row)).join('');
+    this.updateBulkSummary();
+  }
+
+  /** HTML de una fila de la tabla. */
+  bulkRowHtml(row) {
+    const options = [
+      `<option value=""${row.type ? '' : ' selected'}>${REVIEW_LABEL}</option>`,
+      ...PLATE_TYPES.map(t =>
+        `<option value="${t.value}"${row.type === t.value ? ' selected' : ''}>${t.label}</option>`
+      ),
+    ].join('');
+
+    const snippet = row.snippet && row.snippet.match
+      ? `<span class="bulk-snippet">${this.escapeHtml(row.snippet.before)}<mark>${this.escapeHtml(row.snippet.match)}</mark>${this.escapeHtml(row.snippet.after)}</span>`
+      : '<span class="bulk-snippet bulk-muted">agregada manualmente</span>';
+
+    return `<tr data-id="${row.id}" class="${row.include ? '' : 'bulk-row-off'}">
+      <td>
+        <input class="bulk-input" data-id="${row.id}" value="${this.escapeHtml(row.plateInput)}"
+               placeholder="ABCD12" autocomplete="off" spellcheck="false">
+      </td>
+      <td><select class="bulk-select" data-id="${row.id}">${options}</select></td>
+      <td>${snippet}${row.line ? `<span class="bulk-sub">línea ${row.line}</span>` : ''}</td>
+      <td>${this.bulkStatusHtml(row)}</td>
+      <td class="bulk-actions">${this.bulkActionsHtml(row)}</td>
+    </tr>`;
+  }
+
+  /** HTML de la celda "Estado". */
+  bulkStatusHtml(row) {
+    const status = bulkRowStatus(row);
+    const parts = [`<span class="bulk-status ${status.cls}">${status.label}</span>`];
+
+    if (row.plateStatus === 'existing') {
+      const current = this.bulkSession.existingMap.get(row.plate)?.type;
+      if (current) parts.push(`<span class="bulk-sub">actual: ${this.escapeHtml(getTypeLabel(current))}</span>`);
+    }
+
+    if (row.plateStatus === 'duplicate') {
+      parts.push(`<span class="bulk-sub">${row.include ? 'se guardará' : 'omitida'}</span>`);
+    }
+
+    if (row.manual) parts.push('<span class="bulk-sub">manual</span>');
+
+    return parts.join('');
+  }
+
+  /** Botones de acción de la fila. */
+  bulkActionsHtml(row) {
+    const actions = [];
+
+    if (row.doubtful) {
+      actions.push(`<button class="btn-small btn-secondary" data-action="bulk-review" data-id="${row.id}" title="Marcar como revisada">✓</button>`);
+    }
+
+    if (row.plateStatus === 'duplicate') {
+      const label = row.include ? 'Omitir' : 'Conservar';
+      const title = row.include ? 'No guardar esta fila' : 'Guardar esta fila';
+      actions.push(`<button class="btn-small btn-secondary" data-action="bulk-keep" data-id="${row.id}" title="${title}">${label}</button>`);
+    }
+
+    if (row.plateStatus === 'existing') {
+      actions.push(`<button class="btn-small btn-secondary" data-action="bulk-update" data-id="${row.id}" title="Actualizar el tipo del registro existente">Actualizar</button>`);
+    }
+
+    actions.push(`<button class="btn-small btn-danger" data-action="bulk-remove" data-id="${row.id}" title="Eliminar fila">🗑</button>`);
+
+    return actions.join('');
+  }
+
+  /** Actualiza solo la celda de estado de una fila (sin re-dibujar todo). */
+  updateBulkRowStatus(id) {
+    const row = this.bulkSession.get(id);
+    if (!row) return;
+    const tr = document.querySelector(`#bulk-table-body tr[data-id="${id}"]`);
+    const cell = tr?.cells?.[3];
+    if (!cell) return;
+    cell.innerHTML = this.bulkStatusHtml(row);
+    tr.classList.toggle('bulk-row-off', !row.include);
+  }
+
+  /** Resumen + estado del botón "Guardar patentes". */
+  updateBulkSummary() {
+    const el = document.getElementById('bulk-summary');
+    const saveBtn = document.getElementById('bulk-save');
+    const session = this.bulkSession;
+    if (!el) return;
+
+    if (!session.analyzed) {
+      el.innerHTML = '';
+      if (saveBtn) saveBtn.disabled = true;
+      return;
+    }
+
+    const { summary } = session.validate();
+    const chips = [];
+
+    if (summary.ready) chips.push(`<span class="bulk-chip ok">${summary.ready} lista${summary.ready === 1 ? '' : 's'} para guardar</span>`);
+    if (summary.review) chips.push(`<span class="bulk-chip warn">${summary.review} requiere${summary.review === 1 ? '' : 'n'} revisión</span>`);
+    if (summary.duplicate) chips.push(`<span class="bulk-chip dup">${summary.duplicate} duplicada${summary.duplicate === 1 ? '' : 's'} (${summary.duplicate === 1 ? 'omitida' : 'omitidas'})</span>`);
+    if (summary.existing) chips.push(`<span class="bulk-chip dup">${summary.existing} ya existe${summary.existing === 1 ? '' : 'n'}</span>`);
+    if (summary.invalid) chips.push(`<span class="bulk-chip err">${summary.invalid} inválida${summary.invalid === 1 ? '' : 's'}</span>`);
+
+    el.innerHTML = `
+      <div class="bulk-summary-title">Se encontraron ${summary.total} patente${summary.total === 1 ? '' : 's'}</div>
+      <div class="bulk-chips">${chips.join('') || '<span class="bulk-chip">Nada listo para guardar todavía</span>'}</div>
+      ${summary.discarded ? `<div class="bulk-summary-note">${summary.discarded} token(s) ignorados por formato inválido</div>` : ''}
+    `;
+
+    // El botón se habilita después del análisis (pide confirmación al guardar).
+    if (saveBtn) saveBtn.disabled = session.rows.length === 0;
+  }
+
+  /** Muestra los errores de validación de las filas. */
+  showBulkErrors(messages = []) {
+    const box = document.getElementById('bulk-errors');
+    if (!box) return;
+    if (!messages.length) {
+      this.hideBulkErrors();
+      return;
+    }
+    box.innerHTML = messages
+      .map(m => `<div class="bulk-error-line">• ${this.escapeHtml(m.message || m)}</div>`)
+      .join('');
+    box.classList.remove('hidden');
+  }
+
+  hideBulkErrors() {
+    document.getElementById('bulk-errors')?.classList.add('hidden');
+  }
+
+  /** Agrega una fila manual a la tabla. */
+  addBulkRow() {
+    const row = this.bulkSession.addManualRow();
+    this.renderBulkTable();
+    const input = document.querySelector(`#bulk-table-body tr[data-id="${row.id}"] .bulk-input`);
+    input?.focus();
+  }
+
+  /** Limpia el editor masivo. */
+  clearBulk() {
+    this.bulkSession.reset();
+    const text = document.getElementById('bulk-text');
+    if (text) text.value = '';
+    this.hideBulkErrors();
+    this.renderBulkTable();
+  }
+
+  /** Extrae la patente mencionada en un error de la base de datos. */
+  extractPlateFromError(message = '') {
+    const match = String(message).match(/\b([A-Z]{2,4}[0-9]{2,4})\b/);
+    return match ? match[1] : null;
+  }
+
+  /**
+   * Guarda las patentes revisadas con un ÚNICO INSERT (atómico en Postgres:
+   * si una fila falla, no se guarda ninguna).
+   */
+  async saveBulkPlates() {
+    const session = this.bulkSession;
+    const { errors, warnings, toSave, summary } = session.validate();
+
+    if (!toSave.length) {
+      this.showBulkErrors(errors.length ? errors : warnings);
+      this.toast(errors[0]?.message || 'No hay patentes listas para guardar', 'error');
+      return;
+    }
+
+    // Filas con problemas: se informan y no se guardan.
+    if (errors.length) this.showBulkErrors(errors);
+    else this.hideBulkErrors();
+
+    const lines = [
+      `Se encontraron ${summary.total} patente${summary.total === 1 ? '' : 's'}`,
+      `• ${summary.ready} lista${summary.ready === 1 ? '' : 's'} para guardar`,
+    ];
+    if (summary.review) lines.push(`• ${summary.review} requieren revisión (no se guardan)`);
+    if (summary.duplicate) lines.push(`• ${summary.duplicate} duplicada${summary.duplicate === 1 ? '' : 's'} (no se guardan)`);
+    if (summary.existing) lines.push(`• ${summary.existing} ya existen (no se guardan)`);
+    if (summary.invalid) lines.push(`• ${summary.invalid} inválida${summary.invalid === 1 ? '' : 's'} (no se guardan)`);
+    lines.push('');
+    lines.push(`¿Guardar ${summary.ready} patente${summary.ready === 1 ? '' : 's'}?`);
+
+    const confirmed = await this.confirm('Guardar patentes', lines.join('\n'));
+    if (!confirmed) return;
+
+    const btn = document.getElementById('bulk-save');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Guardando...';
+    }
+
+    let payload = [];
+    try {
+      const { data } = await supabase.auth.getUser();
+      payload = session.buildPayload(data?.user?.id);
+      await insertBulkPlates(supabase, payload);
+    } catch (e) {
+      console.error('[Admin] error guardandoPatentes masivas:', e);
+      this.toast('No se guardó ninguna patente. ' + e.message, 'error');
+      const plate = this.extractPlateFromError(e.message);
+      if (plate) {
+        session.markExisting(plate);
+        this.renderBulkTable();
+      }
+      return;
+    } finally {
+      if (btn) btn.textContent = '💾 Guardar patentes';
+      this.updateBulkSummary();
+    }
+
+    this.toast(`${payload.length} patente${payload.length === 1 ? '' : 's'} guardada${payload.length === 1 ? '' : 's'}`, 'success');
+    this.clearBulk();
+    await this.loadPlates(
+      document.getElementById('admin-plate-search')?.value || '',
+      document.getElementById('admin-plate-filter')?.value || ''
+    );
+    await this.loadStats();
+  }
+
+  /** Actualiza el tipo de una patente que ya existe en el sistema. */
+  async updateExistingBulkPlate(id) {
+    const row = this.bulkSession.get(id);
+    if (!row) return;
+
+    if (!row.type) {
+      this.toast('Selecciona el tipo antes de actualizar', 'error');
+      return;
+    }
+
+    const current = this.bulkSession.existingMap.get(row.plate)?.type;
+    const ok = await this.confirm(
+      'Actualizar patente existente',
+      `La patente ${row.plate} ya existe en el sistema.\n` +
+      `Tipo actual: ${current ? getTypeLabel(current) : 'sin tipo'}\n` +
+      `¿Actualizarla a "${getTypeLabel(row.type)}"?`
+    );
+    if (!ok) return;
+
+    const { error } = await supabase
+      .from('plates')
+      .update({ type: row.type })
+      .eq('plate', row.plate);
+
+    if (error) {
+      this.toast('Error: ' + error.message, 'error');
+      return;
+    }
+
+    const entry = this.bulkSession.existingMap.get(row.plate);
+    if (entry) entry.type = row.type;
+
+    this.toast('Patente actualizada', 'success');
+    this.renderBulkTable();
+    await this.loadPlates(
+      document.getElementById('admin-plate-search')?.value || '',
+      document.getElementById('admin-plate-filter')?.value || ''
+    );
+    await this.loadStats();
+  }
+
+  // ============================================================
   // SCANS
   // ============================================================
   async loadScans(statusFilter = '') {
@@ -798,9 +1180,7 @@ export class AdminDashboard {
     }
 
    const statusMap = {
-  special_needs: { label: 'Necesidades especiales', cls: 'warn' },
-  administration: { label: 'Administración', cls: 'reg' },
-  first_aid: { label: 'Primeros auxilios', cls: 'stolen' },
+  ...TYPE_LABELS,
   unknown: { label: 'Desconocido', cls: 'unk' },
   error: { label: 'Error', cls: 'unk' },
 };
@@ -848,6 +1228,8 @@ export class AdminDashboard {
           await this.loadUsers();
         } else if (target === 'plates') {
           await this.loadPlates();
+        } else if (target === 'bulk') {
+          this.hideBulkErrors();
         } else if (target === 'scans') {
           await this.loadScans();
         } else if (target === 'access') {
@@ -897,6 +1279,70 @@ export class AdminDashboard {
     const addPlate = document.getElementById('admin-add-plate');
     if (addPlate) {
       addPlate.addEventListener('click', () => this.openPlateModal());
+    }
+
+    // ============================================================
+    // Ingreso masivo por texto
+    // ============================================================
+    const bulkAnalyze = document.getElementById('bulk-analyze');
+    if (bulkAnalyze) {
+      bulkAnalyze.addEventListener('click', () => this.analyzeBulkText());
+    }
+    const bulkClear = document.getElementById('bulk-clear');
+    if (bulkClear) {
+      bulkClear.addEventListener('click', () => this.clearBulk());
+    }
+    const bulkAddRow = document.getElementById('bulk-add-row');
+    if (bulkAddRow) {
+      bulkAddRow.addEventListener('click', () => this.addBulkRow());
+    }
+    const bulkSave = document.getElementById('bulk-save');
+    if (bulkSave) {
+      bulkSave.addEventListener('click', () => this.saveBulkPlates());
+    }
+
+    const bulkBody = document.getElementById('bulk-table-body');
+    if (bulkBody) {
+      // Edición directa de la patente (sin re-dibujar la tabla)
+      bulkBody.addEventListener('input', (e) => {
+        const input = e.target.closest('.bulk-input');
+        if (!input) return;
+        this.bulkSession.updatePlate(input.dataset.id, input.value);
+        this.updateBulkRowStatus(input.dataset.id);
+        this.updateBulkSummary();
+      });
+
+      // Cambio de tipo
+      bulkBody.addEventListener('change', (e) => {
+        const select = e.target.closest('.bulk-select');
+        if (!select) return;
+        this.bulkSession.updateType(select.dataset.id, select.value);
+        this.updateBulkRowStatus(select.dataset.id);
+        this.updateBulkSummary();
+      });
+
+      // Acciones por fila
+      bulkBody.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        const id = btn.dataset.id;
+        const action = btn.dataset.action;
+
+        if (action === 'bulk-remove') {
+          this.bulkSession.removeRow(id);
+          this.renderBulkTable();
+        } else if (action === 'bulk-review') {
+          this.bulkSession.markReviewed(id);
+          this.renderBulkTable();
+        } else if (action === 'bulk-keep') {
+          const row = this.bulkSession.get(id);
+          if (!row) return;
+          this.bulkSession.setInclude(id, !row.include);
+          this.renderBulkTable();
+        } else if (action === 'bulk-update') {
+          await this.updateExistingBulkPlate(id);
+        }
+      });
     }
 
     // Modal de patente: guardar y cancelar
