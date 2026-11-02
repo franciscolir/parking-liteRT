@@ -134,6 +134,24 @@ self.addEventListener('activate', (event) => {
         names.filter((n) => !keep.has(n)).map((n) => caches.delete(n))
       );
       await self.clients.claim();
+
+      // Avisar a las pestañas abiertas de que hay una versión nueva.
+      // El cliente usa esto para recargarse (así la navegación siguiente
+      // la sirve ESTE service worker → documento cross-origin isolated y
+      // código nuevo).
+      const windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (const client of windowClients) {
+        try {
+          client.postMessage({ type: 'sw-updated', version: VERSION });
+        } catch (e) { /* ignore */ }
+        // Client.navigate() no existe en todos los navegadores (Safari),
+        // pero donde existe es la forma más directa de forzar la recarga.
+        if (typeof client.navigate === 'function') {
+          try {
+            await client.navigate(client.url);
+          } catch (e) { /* ignore */ }
+        }
+      }
     })()
   );
 });

@@ -34,6 +34,25 @@ if ('serviceWorker' in navigator) {
   if (isDevHost) {
     console.log('[PWA] Service Worker deshabilitado en dev (npm run dev). Verificá la PWA en el deploy.');
   } else {
+    // El Service Worker es el que agrega COOP/COEP (GitHub Pages no deja
+    // mandar headers custom). Una navegación servida por la red no queda
+    // aislada y ONNX corre single-thread, así que hay que recargar para
+    // que la navegación pase por el SW.
+    //
+    // El guard en sessionStorage evita bucles: una sola recarga por
+    // sesión y solo si de verdad hace falta.
+    let reloading = false;
+    const reloadForIsolation = (reason) => {
+      if (reloading || crossOriginIsolated) return;
+      try {
+        if (sessionStorage.getItem('platedetect:iso-reload')) return;
+        sessionStorage.setItem('platedetect:iso-reload', '1');
+      } catch (e) { return; }   // sin sessionStorage no recargamos
+      reloading = true;
+      console.log('[PWA] Recargando (' + reason + ') para activar el modo multi-hilo...');
+      location.reload();
+    };
+
     window.addEventListener('load', () => {
       navigator.serviceWorker
         .register('./sw.js')
@@ -41,24 +60,27 @@ if ('serviceWorker' in navigator) {
         .catch((err) => console.warn('[PWA] No se pudo registrar el Service Worker:', err));
     });
 
-    // El Service Worker es el que agrega COOP/COEP (GitHub Pages no deja
-    // mandar headers custom). La PRIMERA navegación la sirve la red, así
-    // que el documento todavía no quedó aislado y ONNX corre single-thread.
-    // Cuando el SW está listo se recarga una sola vez para que la
-    // navegación pase por el SW. El guard en sessionStorage evita bucles.
-    navigator.serviceWorker.ready.then(() => {
-      try {
-        if (crossOriginIsolated) {
-          // Ya estamos aislados: liberar el flag para que otro momento
-          // (por ejemplo, tras un deploy nuevo) se pueda recargar otra vez.
-          sessionStorage.removeItem('platedetect:iso-reload');
-          return;
-        }
-        if (sessionStorage.getItem('platedetect:iso-reload')) return;
-        sessionStorage.setItem('platedetect:iso-reload', '1');
-      } catch (e) { return; }   // sin sessionStorage no recargamos
-      console.log('[PWA] Recargando para activar el modo multi-hilo...');
-      location.reload();
-    }).catch(() => {});
+    // El SW avisó que se activó una versión nueva (o es la primera
+    // instalación): hay que recargar para tomar el shell nuevo.
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data && event.data.type === 'sw-updated') {
+        reloadForIsolation('sw-updated');
+      }
+    });
+
+    // El SW tomó control de esta página (primera visita o versión nueva).
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      reloadForIsolation('controllerchange');
+    });
+
+    navigator.serviceWorker.ready
+      .then(async () => {
+        // El SW (en Chrome/Edge) ya recargó la pestaña al activarse. Este
+        // camino es el respaldo para los navegadores sin Client.navigate()
+        // (Safari). El margen deja que el SW haga su trabajo primero.
+        await new Promise((r) => setTimeout(r, 1200));
+        reloadForIsolation('sw-ready');
+      })
+      .catch(() => {});
   }
 }
