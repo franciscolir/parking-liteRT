@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]+$/, '');
 const PORT = Number(process.env.PORT || 3000);
+const NO_ISOLATION = process.env.NO_ISOLATION === '1';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -87,19 +88,28 @@ const server = createServer(async (req, res) => {
 });
 
 function send(res, file, info) {
-  res.writeHead(200, {
+  const headers = {
     'Content-Type': MIME[extname(file).toLowerCase()] || 'application/octet-stream',
     'Content-Length': info.size,
-    // Mismas cabeceras que el viejo dev server de Vite
-    'Cross-Origin-Opener-Policy': 'same-origin',
-    'Cross-Origin-Embedder-Policy': 'credentialless',
     'Cache-Control': 'no-store',
-  });
+  };
+  // COOP/COEP para que en local ORT use varios hilos (en producción los
+  // agrega el Service Worker, porque GitHub Pages no deja mandar headers).
+  // NO_ISOLATION=1 desactiva los headers (para probar que los pone el SW).
+  if (!NO_ISOLATION) {
+    headers['Cross-Origin-Opener-Policy'] = 'same-origin';
+    headers['Cross-Origin-Embedder-Policy'] = 'credentialless';
+  }
+  res.writeHead(200, headers);
   createReadStream(file).pipe(res);
 }
 
 server.listen(PORT, () => {
   console.log(`\n  Estacionamiento (sin build) → http://localhost:${PORT}\n`);
   console.log(`  Raíz: ${ROOT}`);
-  console.log(`  COOP/COEP activos (crossOriginIsolated = true)\n`);
+  if (NO_ISOLATION) {
+    console.log('  COOP/COEP DESACTIVADOS (para probar el Service Worker)\n');
+  } else {
+    console.log('  COOP/COEP activos (crossOriginIsolated = true)\n');
+  }
 });

@@ -1,8 +1,9 @@
-import { ort } from './vendor/ort-setup.js';
+import { getOrt, ORT_EXECUTION_PROVIDERS } from './vendor/ort-setup.js';
 
 export class PlateDetector {
   constructor(options = {}) {
     this.session = null;
+    this.ort = null;
     this.inputSize = options.inputSize || 640;
     this.confThreshold = options.confThreshold || 0.5;
     this.iouThreshold = options.iouThreshold || 0.45;
@@ -12,6 +13,11 @@ export class PlateDetector {
     this.fbColFactor = options.fbColFactor ?? 0.12;
     this.fbMinHeight = options.fbMinHeight ?? 4;
     this.fbSizeLimit = options.fbSizeLimit ?? 0.95;
+    // El fallback analiza bordes: no necesita el frame completo.
+    // fbMaxWidth = ancho máximo del frame de análisis (0 = sin reducir).
+    this.fbMaxWidth = options.fbMaxWidth ?? 640;
+    // Cada cuántos frames se hace el análisis (1 = siempre).
+    this.fbInterval = options.fbInterval ?? 3;
 
     this.mock = true;
     this._transform = null;
@@ -33,14 +39,17 @@ export class PlateDetector {
     this._fbGrad = null;
     this._fbRowCount = null;
     this._fbColCount = null;
+    this._fbCounter = 0;
+    this._lastFbBox = null;
     this._cropCanvas = null;
     this._cropCtx = null;
   }
 
   async loadModel(modelPath) {
     try {
-      this.session = await ort.InferenceSession.create(modelPath, {
-        executionProviders: ['webgpu', 'webgl', 'wasm'], 
+      this.ort = await getOrt();
+      this.session = await this.ort.InferenceSession.create(modelPath, {
+        executionProviders: ORT_EXECUTION_PROVIDERS,
       });
       this.mock = false;
     } catch (e) {
@@ -50,9 +59,9 @@ export class PlateDetector {
   }
 
   async warmup() {
-    if (this.mock) return;
+    if (this.mock || !this.session) return;
     const sz = this.inputSize;
-    const dummy = new ort.Tensor('float32', new Float32Array(3 * sz * sz), [1, 3, sz, sz]);
+    const dummy = new this.ort.Tensor('float32', new Float32Array(3 * sz * sz), [1, 3, sz, sz]);
     await this.session.run({ [this.session.inputNames[0]]: dummy });
   }
 
@@ -165,7 +174,7 @@ export class PlateDetector {
       data[ch + i] = rgba[pi + 1] / 255;
       data[2 * ch + i] = rgba[pi + 2] / 255;
     }
-    return new ort.Tensor('float32', data, [1, 3, isz, isz]);
+    return new this.ort.Tensor('float32', data, [1, 3, isz, isz]);
   }
 
   _decodeAll(data, dims) {
@@ -233,103 +242,148 @@ export class PlateDetector {
     };
   }
 
+  /**
+   * Detección de respaldo por bordes (cuando YOLO no encuentra nada).
+   *
+   * Es la parte más cara del loop: recorre el frame completo. Por eso:
+   *  - se hace sobre un frame reducido (fbMaxWidth): los bordes no
+   *    necesitan resolución completa,
+   *  - se hace cada fbInterval frames, reutilizando el último box
+   *    encontrado (el suavizado de arriba ya tolera boxes repetidos),
+   *  - la escala de grises y el gradiente se calculan en una sola pasada.
+   *
+   * Los umbrales que están en píxeles se escalan con `scale` para que
+   * signifiquen lo mismo que en el frame original.
+   */
   _detectFallback(video) {
     const vw = this._vw(video);
     const vh = this._vh(video);
     if (vw < 50 || vh < 50) return null;
 
+    // Throttle: entre análisis se devuelve el último box conocido.
+    this._fbCounter++;
+    if (this.fbInterval > 1 && (this._fbCounter % this.fbInterval) !== 0) {
+      return this._lastFbBox;
+    }
+
+    const scale = this.fbMaxWidth > 0 ? Math.min(1, this.fbMaxWidth / vw) : 1;
+    const aw = Math.max(2, Math.round(vw * scale));
+    const ah = Math.max(2, Math.round(vh * scale));
+
     if (!this._fbCanvas) {
       this._fbCanvas = document.createElement('canvas');
       this._fbCtx = this._fbCanvas.getContext('2d', { willReadFrequently: true });
     }
-    this._fbCanvas.width = vw;
-    this._fbCanvas.height = vh;
+    this._fbCanvas.width = aw;
+    this._fbCanvas.height = ah;
     const ctx = this._fbCtx;
-    ctx.drawImage(video, 0, 0);
-    const imageData = ctx.getImageData(0, 0, vw, vh);
+    ctx.drawImage(video, 0, 0, aw, ah);
+    const imageData = ctx.getImageData(0, 0, aw, ah);
     const data = imageData.data;
 
-    const total = vw * vh;
+    const total = aw * ah;
     if (!this._fbGray || this._fbGray.length !== total) {
       this._fbGray = new Uint8Array(total);
       this._fbGrad = new Float32Array(total);
-      this._fbRowCount = new Uint16Array(vh);
-      this._fbColCount = new Uint16Array(vw);
+      this._fbRowCount = new Uint16Array(ah);
+      this._fbColCount = new Uint16Array(aw);
     }
     const gray = this._fbGray;
     const grad = this._fbGrad;
     const rowCount = this._fbRowCount;
     const colCount = this._fbColCount;
 
-    for (let i = 0; i < total; i++) {
-      const pi = i << 2;
-      gray[i] = (data[pi] * 0.299 + data[pi + 1] * 0.587 + data[pi + 2] * 0.114) | 0;
-    }
-
+    // Escala de grises + gradiente horizontal en una sola pasada.
+    // El gradiente entre dos píxeles se calcula con el valor anterior
+    // (el siguiente píxel todavía no está calculado).
     let maxGrad = 0;
-    for (let y = 0; y < vh; y++) {
-      for (let x = 0; x < vw - 1; x++) {
-        const idx = y * vw + x;
-        const g = Math.abs(gray[idx] - gray[idx + 1]);
-        grad[idx] = g;
-        if (g > maxGrad) maxGrad = g;
+    for (let y = 0; y < ah; y++) {
+      const rowOff = y * aw;
+      let prevGray = 0;
+      for (let x = 0; x < aw; x++) {
+        const idx = rowOff + x;
+        const pi = idx << 2;
+        const g = (data[pi] * 0.299 + data[pi + 1] * 0.587 + data[pi + 2] * 0.114) | 0;
+        gray[idx] = g;
+        if (x > 0) {
+          const d = g - prevGray;
+          const abs = d < 0 ? -d : d;
+          grad[idx - 1] = abs;
+          if (abs > maxGrad) maxGrad = abs;
+        }
+        prevGray = g;
       }
     }
-    if (maxGrad < 5) return null;
+    // El gradiente se atenúa al reducir el frame: el piso absoluto baja.
+    if (maxGrad < 5 * scale) { this._lastFbBox = null; return null; }
 
     const edgeThresh = maxGrad * this.fbEdge;
 
-    for (let y = 0; y < vh; y++) {
+    for (let y = 0; y < ah; y++) {
       let c = 0;
-      for (let x = 0; x < vw; x++) { if (grad[y * vw + x] > edgeThresh) c++; }
+      const off = y * aw;
+      for (let x = 0; x < aw; x++) { if (grad[off + x] > edgeThresh) c++; }
       rowCount[y] = c;
     }
 
     let maxR = 0;
-    for (let y = 0; y < vh; y++) { if (rowCount[y] > maxR) maxR = rowCount[y]; }
-    if (maxR < 3) return null;
+    for (let y = 0; y < ah; y++) { if (rowCount[y] > maxR) maxR = rowCount[y]; }
+    if (maxR < 3) { this._lastFbBox = null; return null; }
 
     const rowMin = Math.max(3, maxR * this.fbRowFactor);
     let yS = -1, yE = -1;
-    for (let y = 0; y < vh; y++) {
+    for (let y = 0; y < ah; y++) {
       if (rowCount[y] > rowMin) { if (yS === -1) yS = y; yE = y; }
     }
-    if (yS === -1 || yE - yS < 3) return null;
+    const minHeight = Math.max(2, 3 * scale);
+    if (yS === -1 || yE - yS < minHeight) { this._lastFbBox = null; return null; }
 
-    yS = Math.max(0, yS - 3);
-    yE = Math.min(vh, yE + 3);
+    const padY = Math.max(1, Math.round(3 * scale));
+    yS = Math.max(0, yS - padY);
+    yE = Math.min(ah, yE + padY);
 
-    for (let x = 0; x < vw; x++) {
+    for (let x = 0; x < aw; x++) {
       let c = 0;
-      for (let y = yS; y < yE; y++) { if (grad[y * vw + x] > edgeThresh) c++; }
+      for (let y = yS; y < yE; y++) { if (grad[y * aw + x] > edgeThresh) c++; }
       colCount[x] = c;
     }
 
     let maxC = 0;
-    for (let x = 0; x < vw; x++) { if (colCount[x] > maxC) maxC = colCount[x]; }
-    if (maxC < 3) return null;
+    for (let x = 0; x < aw; x++) { if (colCount[x] > maxC) maxC = colCount[x]; }
+    if (maxC < 3) { this._lastFbBox = null; return null; }
 
     const colMin = Math.max(3, maxC * this.fbColFactor);
     let xS = -1, xE = -1;
-    for (let x = 0; x < vw; x++) {
+    for (let x = 0; x < aw; x++) {
       if (colCount[x] > colMin) { if (xS === -1) xS = x; xE = x; }
     }
-    if (xS === -1 || xE - xS < 10) return null;
+    const minWidth = Math.max(4, 10 * scale);
+    if (xS === -1 || xE - xS < minWidth) { this._lastFbBox = null; return null; }
 
-    xS = Math.max(0, xS - 4);
-    xE = Math.min(vw, xE + 4);
+    const padX = Math.max(1, Math.round(4 * scale));
+    xS = Math.max(0, xS - padX);
+    xE = Math.min(aw, xE + padX);
 
     const pw = xE - xS;
     const ph = yE - yS;
-    if (pw < 10 || ph < this.fbMinHeight) return null;
-    if (pw > vw * this.fbSizeLimit || ph > vh * this.fbSizeLimit) return null;
+    if (pw < minWidth || ph < Math.max(2, this.fbMinHeight * scale)) { this._lastFbBox = null; return null; }
+    if (pw > aw * this.fbSizeLimit || ph > ah * this.fbSizeLimit) { this._lastFbBox = null; return null; }
 
     const aspect = pw / ph;
     const aspectScore = Math.max(0, 1 - Math.abs(aspect - 3.5) / 5);
-    const densityScore = Math.min(1, (maxR + maxC) / (vw * 0.05 + vh * 0.5));
+    const densityScore = Math.min(1, (maxR + maxC) / (aw * 0.05 + ah * 0.5));
     const score = 0.2 + 0.4 * aspectScore + 0.4 * densityScore;
 
-    return { x1: xS, y1: yS, x2: xE, y2: yE, score: Math.min(0.7, score) };
+    // Volver a coordenadas del frame original.
+    const box = {
+      x1: xS / scale,
+      y1: yS / scale,
+      x2: xE / scale,
+      y2: yE / scale,
+      score: Math.min(0.7, score),
+    };
+    this._lastFbBox = box;
+    return box;
   }
 
   cropPlate(video, box) {

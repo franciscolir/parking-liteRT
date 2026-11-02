@@ -353,6 +353,9 @@ html, body {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* Por encima del canvas: el oscurecido de la zona de escaneo se dibuja
+     en el canvas y el HUD/scanner quedan por encima, sin opacarse. */
+  z-index: 4;
 }
 
 .overlay-canvas {
@@ -374,8 +377,9 @@ html, body {
   align-items: center;
   padding: 4px 10px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, .55);
-  backdrop-filter: blur(4px);
+  /* Sin backdrop-filter: obligaba al navegador a leer y desenfocar el
+     video en cada frame (muy caro en móviles). */
+  background: rgba(0, 0, 0, .72);
   font-family: 'Courier New', monospace;
   font-size: 11px;
   font-weight: 700;
@@ -384,6 +388,9 @@ html, body {
 }
 .hud-gpu { color: #4ecdc4; }
 
+/* El "hueco" de luz sobre la zona de escaneo se dibuja en el canvas
+   (ver drawCanvasOverlay): un box-shadow de 9999px sobre el video era
+   muy costoso de componer. */
 .scan-frame {
   position: absolute;
   top: 50%;
@@ -393,10 +400,9 @@ html, body {
   height: 35%;
   border: 2px solid #22c55e;
   border-radius: 8px;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .45);
   transition: border-color .15s;
 }
-.scan-frame.active { border-color: #ffeb3b; box-shadow: 0 0 16px rgba(255, 235, 59, .5), 0 0 0 9999px rgba(0, 0, 0, .45); }
+.scan-frame.active { border-color: #ffeb3b; box-shadow: 0 0 16px rgba(255, 235, 59, .5); }
 
 .scan-frame::before {
   content: '';

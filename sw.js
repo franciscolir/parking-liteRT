@@ -29,6 +29,20 @@ const CDN_MAX_ENTRIES = 20;
 const SUPABASE_MAX_ENTRIES = 100;
 const SUPABASE_TIMEOUT_MS = 10000;
 
+// GitHub Pages no permite mandar headers custom, pero el Service Worker
+// sí puede agregarlos a la respuesta de la navegación. Con COOP + COEP el
+// documento queda "cross-origin isolated" y ONNX Runtime puede usar
+// SharedArrayBuffer → inferencia multi-hilo (medido: ~2x más rápida que
+// en single-thread: 304 ms → 143 ms por inferencia de YOLOv8).
+//
+// "credentialless" (y no "require-corp") porque las peticiones a
+// jsDelivr (el WASM de ORT) son cross-origin: con credentialless se
+// permiten sin tener que mandar CORS/CORP en cada recurso.
+const ISOLATION_HEADERS = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'credentialless',
+};
+
 // App shell + código + modelos. Mantener sincronizado con los archivos
 // que copia el paso "Armar sitio estatico" de .github/workflows/deploy.yml
 const PRECACHE = [
@@ -52,7 +66,9 @@ const PRECACHE = [
   'validator.js',
   'vendor/ort-setup.js',
   'vendor/ort.all.bundle.min.mjs',
+  'vendor/ort.wasm.bundle.min.mjs',
   'vendor/ort-wasm-simd-threaded.jsep.mjs',
+  'vendor/ort-wasm-simd-threaded.mjs',
   'vendor/supabase.js',
   'manifest.json',
   'favicon.svg',
@@ -133,6 +149,20 @@ async function trimCache(cacheName, maxEntries) {
   await Promise.all(keys.slice(0, keys.length - maxEntries).map((k) => cache.delete(k)));
 }
 
+/** Devuelve la respuesta con las cabeceras de aislamiento agregadas. */
+function withIsolationHeaders(res) {
+  if (!res || res.type === 'error' || res.status === 0) return res;
+  const headers = new Headers(res.headers);
+  for (const [key, value] of Object.entries(ISOLATION_HEADERS)) {
+    headers.set(key, value);
+  }
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  });
+}
+
 async function putStamped(cache, request, res) {
   // Guardamos el momento de la cachada en una cabecera propia para poder
   // decidir frescura después (Date no siempre es legible en cross-origin).
@@ -206,8 +236,16 @@ self.addEventListener('fetch', (event) => {
   // 1) Navegaciones (HTML): el shell cacheado es atómico (mismo VERSION
   //    que los JS/CSS), así que nunca se mezclan versiones. Si no está
   //    cacheado, va a red.
+  //
+  //    La respuesta se devuelve con COOP/COEP para que el documento quede
+  //    cross-origin isolated (ver ISOLATION_HEADERS).
   if (request.mode === 'navigate') {
-    event.respondWith(cacheFirst(request, SHELL_CACHE));
+    event.respondWith(
+      (async () => {
+        const res = await cacheFirst(request, SHELL_CACHE);
+        return withIsolationHeaders(res);
+      })()
+    );
     return;
   }
 

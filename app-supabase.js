@@ -84,7 +84,10 @@ document.addEventListener('DOMContentLoaded', async function () {
   // ⚡ IMPORTANTE: llamar a initAuth
   await initAuth();
 
-  initModels();
+  // Los modelos se cargan en segundo plano, cuando el navegador está
+  // libre: no bloquean el arranque de la app.
+  scheduleIdle(() => { initModels().catch(() => {}); });
+
   runDiagnostics();
   setupPWAInstall();
 });
@@ -399,7 +402,9 @@ window.navigate = async function (view) {
       break;
     case 'camera':
       updateHistory();
-      if (!detector || !ocr) await initModels();
+      // initModels() es idempotente: si la carga ya está en curso (arranque
+      // en segundo plano) se espera a esa misma promesa.
+      await initModels().catch(() => {});
       break;
     case 'call':
       renderContacts();
@@ -807,9 +812,38 @@ window.authWithGoogle = () => signInWithOAuth('google');
 window.authWithApple = () => signInWithOAuth('apple');
 
 // ============================================================
-// CÁMARA Y DETECCIÓN (igual que app.js original)
+// CARGA DE MODELOS (perezosa)
 // ============================================================
-async function initModels() {
+// Los modelos ONNX pesan ~16 MB y la sesión de ORT + el warmup bloquean el
+// main thread (tareas de más de 1 s). Cargarlos al arrancar hacía que la
+// primera pintura tardara, así que ahora:
+//   - se cargan al entrar a la vista Cámara (await), y/o
+//   - en segundo plano cuando el navegador está libre (requestIdleCallback),
+//     para que estén listos cuando el usuario abra la cámara.
+let modelsPromise = null;
+
+const yieldToPaint = () => new Promise(r => setTimeout(r, 0));
+
+const scheduleIdle = (fn) => {
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(fn, { timeout: 4000 });
+  } else {
+    setTimeout(fn, 1500);
+  }
+};
+
+function initModels() {
+  if (!modelsPromise) {
+    modelsPromise = loadModels().catch((e) => {
+      console.warn('[Models] error al cargar:', e);
+      modelsPromise = null;   // permite reintentar
+      throw e;
+    });
+  }
+  return modelsPromise;
+}
+
+async function loadModels() {
   setStatus('Cargando modelos...');
   const hud = document.getElementById('hud-gpu');
   if (hud) hud.textContent = isMobile ? 'MÓVIL' : 'DESK';
@@ -820,14 +854,22 @@ async function initModels() {
   ocr = new PlateOCR();
   if (isMobile) ocrSkipInterval = 2;
 
+  // La descarga del detector va en paralelo con la del OCR (lo que más
+  // tarda es la red).
+  const detPromise = fetch('models/yolov8_plate.onnx').then(r => r.arrayBuffer());
+  const ocrPromise = ocr.loadModel('models/ppocr_rec.onnx', 'models/ppocr_keys.json');
+
   setStatus('Cargando detector YOLOv8...');
-  const detBuf = await fetch('models/yolov8_plate.onnx').then(r => r.arrayBuffer());
+  const detBuf = await detPromise;
   const detLoaded = await detector.loadModel(detBuf);
+  const ocrLoaded = await ocrPromise;
+  await yieldToPaint();
 
-  setStatus('Cargando OCR PP-OCRv4...');
-  const ocrLoaded = await ocr.loadModel('models/ppocr_rec.onnx', 'models/ppocr_keys.json');
-
-    setStatus('Calentando modelos...');
+  // El warmup compila el grafo para el tamaño real: es la parte más
+  // pesada (una inferencia de 640x640). Se hace después de pintar el
+  // estado para que el usuario no vea la pantalla congelada.
+  setStatus('Calentando modelos...');
+  await yieldToPaint();
   try {
     await Promise.race([
       (async () => {
@@ -945,7 +987,9 @@ async function loop() {
             if (streakCount >= streakRequired && streakCandidate !== lastPlate) {
               lastPlate = streakCandidate;
               lastPlateBox = { x1: box.x1, y1: box.y1, x2: box.x2, y2: box.y2 };
-              await processPlate(lastPlate);
+              // Sin await: la consulta a Supabase va en segundo plano para
+              // no frenar el loop de cámara.
+              processPlate(lastPlate);
               streakCount = 0;
             }
           } else {
@@ -972,46 +1016,59 @@ async function loop() {
 // ============================================================
 // PROCESAR PATENTE DETECTADA (usa Supabase)
 // ============================================================
-async function processPlate(plate) {
-  setStatus('Patente: ' + plate);
-  const result = document.getElementById('cam-result');
-  result.classList.remove('hidden', 'success', 'danger', 'warning');
-  document.getElementById('result-plate').textContent = plate;
+// La consulta a Supabase NO se espera dentro del loop de cámara: se
+// responde al instante con la cache local de patentes y la consulta +
+// guardado van en segundo plano. Antes el `await` dentro del
+// requestAnimationFrame congelaba el loop (2 round-trips por patente).
+const pendingPlates = new Set();
 
-  // Verificar en Supabase (con cache local como fallback)
+/** Tipo de patente según la cache local (0 round-trips). */
+function localPlateType(plate) {
+  if (platesCache.first_aid?.includes(plate)) return 'first_aid';
+  if (platesCache.administration?.includes(plate)) return 'administration';
+  if (platesCache.special_needs?.includes(plate)) return 'special_needs';
+  return null;
+}
+
+function processPlate(plate) {
+  setStatus('Patente: ' + plate);
+
+  // Respuesta inmediata con la cache local
+  const localType = localPlateType(plate);
+  renderPlateResult(plate, localType);
+
+  // Si ya hay una consulta en curso para la misma patente, no se duplica
+  if (pendingPlates.has(plate)) return;
+  pendingPlates.add(plate);
+  syncPlate(plate, localType)
+    .catch((e) => console.warn('Error sincronizando patente:', e))
+    .finally(() => pendingPlates.delete(plate));
+}
+
+/** Consulta al servidor + guardado del escaneo (en segundo plano). */
+async function syncPlate(plate, localType) {
   let plateData = null;
   try {
     plateData = await lookupPlate(plate);
   } catch (e) {
-    console.warn('Supabase lookup failed, using cache:', e);
+    console.warn('Supabase lookup failed, usando cache:', e);
   }
 
-  // Fallback a cache local
-  const isFirstAid = platesCache.first_aid?.includes(plate);
-  const isAdmin = platesCache.administration?.includes(plate);
-  const isSpecialNeeds = platesCache.special_needs?.includes(plate);
+  const serverType = plateData?.type || null;
+  const type = serverType || localType || 'unknown';
 
-  let st, css, ico, status;
-  if (isFirstAid || plateData?.type === 'first_aid') {
-    st = '🚑 PRIMEROS AUXILIOS'; css = 'danger'; ico = '🚑'; status = 'first_aid';
-    scanCount.stolen = (scanCount.stolen || 0) + 1;
-  } else if (isAdmin || plateData?.type === 'administration') {
-    st = '🏢 ADMINISTRACIÓN'; css = 'success'; ico = '🏢'; status = 'administration';
-    scanCount.registered = (scanCount.registered || 0) + 1;
-  } else if (isSpecialNeeds || plateData?.type === 'special_needs') {
-    st = '♿ NECESIDADES ESPECIALES'; css = 'warning'; ico = '♿'; status = 'special_needs';
-    scanCount.unknown = (scanCount.unknown || 0) + 1;
-  } else {
-    st = '⚠ NO REGISTRADO'; css = 'warning'; ico = '🔴'; status = 'unknown';
-    scanCount.unknown = (scanCount.unknown || 0) + 1;
+  // Si el servidor difiere de la cache local, se corrige el cartel
+  if (serverType && serverType !== localType) {
+    renderPlateResult(plate, serverType);
   }
-  scanCount.total = (scanCount.total || 0) + 1;
+
+  countScan(type);
 
   // Guardar en Supabase
   try {
     await saveScan({
       plate,
-      status,
+      status: type,
       confidence: 0.9,
       raw_ocr_text: lastRawText,
       corrected_text: lastCorrected,
@@ -1019,11 +1076,41 @@ async function processPlate(plate) {
     });
   } catch (e) {
     console.warn('Error guardando scan:', e);
-    scanHistory.unshift({ plate, status: css, time: Date.now() });
+    // El historial local usa la clase CSS (success/danger/warning)
+    scanHistory.unshift({ plate, status: plateStatusInfo(type).css, time: Date.now() });
     if (scanHistory.length > 20) scanHistory.pop();
     localStorage.setItem('plateHistory', JSON.stringify(scanHistory));
     localStorage.setItem('plateStats', JSON.stringify(scanCount));
   }
+}
+
+function countScan(type) {
+  scanCount.total = (scanCount.total || 0) + 1;
+  if (type === 'first_aid') scanCount.stolen = (scanCount.stolen || 0) + 1;
+  else if (type === 'administration') scanCount.registered = (scanCount.registered || 0) + 1;
+  else scanCount.unknown = (scanCount.unknown || 0) + 1;
+}
+
+/** Texto, clase CSS e ícono para un tipo de patente. */
+function plateStatusInfo(type) {
+  if (type === 'first_aid') {
+    return { st: '🚑 PRIMEROS AUXILIOS', css: 'danger', ico: '🚑' };
+  } else if (type === 'administration') {
+    return { st: '🏢 ADMINISTRACIÓN', css: 'success', ico: '🏢' };
+  } else if (type === 'special_needs') {
+    return { st: '♿ NECESIDADES ESPECIALES', css: 'warning', ico: '♿' };
+  } else {
+    return { st: '⚠ NO REGISTRADO', css: 'warning', ico: '🔴' };
+  }
+}
+
+/** Pinta el resultado de la patente detectada. */
+function renderPlateResult(plate, type) {
+  const result = document.getElementById('cam-result');
+  result.classList.remove('hidden', 'success', 'danger', 'warning');
+  document.getElementById('result-plate').textContent = plate;
+
+  const { st, css, ico } = plateStatusInfo(type);
 
   result.className = 'camera-result ' + css;
   document.getElementById('result-icon').textContent = ico;
@@ -1294,6 +1381,26 @@ function drawCanvasOverlay(boxes) {
   if (!canvas || !canvas.width) return;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Oscurecer todo menos la zona de escaneo. Se hace en el canvas (GPU)
+  // en vez de con un box-shadow gigante sobre el video, que era muy
+  // caro de componer.
+  if (running) {
+    const w = canvas.width;
+    const h = canvas.height;
+    const x0 = w * 0.125, x1 = w * 0.875;
+    const y0 = h * 0.325, y1 = h * 0.675;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, .45)';
+    ctx.fillRect(0, 0, w, h);
+    // "Borrar" el rectángulo de escaneo. El fillStyle tiene que ser opaco:
+    // con uno semitransparente el hueco quedaría al 55% en vez de 100%.
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.restore();
+  }
 
   for (const d of boxes) {
     const iw = d.x2 - d.x1;

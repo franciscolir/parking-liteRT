@@ -1,8 +1,9 @@
-import { ort } from './vendor/ort-setup.js';
+import { getOrt, ORT_EXECUTION_PROVIDERS } from './vendor/ort-setup.js';
 
 export class PlateOCR {
   constructor() {
     this.session = null;
+    this.ort = null;
     this.chars = [''];
     this.inputHeight = 48;
     this.mock = true;
@@ -12,9 +13,10 @@ export class PlateOCR {
 
   async loadModel(modelPath, keysPath) {
     try {
+      this.ort = await getOrt();
       const [session, chars] = await Promise.all([
-        ort.InferenceSession.create(modelPath, {
-          executionProviders: ['webgpu', 'webgl', 'wasm'],
+        this.ort.InferenceSession.create(modelPath, {
+          executionProviders: ORT_EXECUTION_PROVIDERS,
         }),
         fetch(keysPath).then(r => r.json()),
       ]);
@@ -29,16 +31,16 @@ export class PlateOCR {
   }
 
   async warmup() {
-    if (this.mock) return;
+    if (this.mock || !this.session) return;
     const dummyW = 100;
-    const dummy = new ort.Tensor('float32', new Float32Array(3 * this.inputHeight * dummyW), [1, 3, this.inputHeight, dummyW]);
+    const dummy = new this.ort.Tensor('float32', new Float32Array(3 * this.inputHeight * dummyW), [1, 3, this.inputHeight, dummyW]);
     await this.session.run({ [this.session.inputNames[0]]: dummy });
   }
 
   async recognize(imageData) {
     if (this.mock) return '';
     const { data, shape } = this._preprocess(imageData);
-    const ortTensor = new ort.Tensor('float32', data, shape);
+    const ortTensor = new this.ort.Tensor('float32', data, shape);
     const results = await this.session.run({ [this.session.inputNames[0]]: ortTensor });
     const output = results[this.session.outputNames[0]];
     return this._ctcGreedyDecode(output.data, output.dims);

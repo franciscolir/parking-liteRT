@@ -102,6 +102,7 @@ jobs:
           fi
           for f in site/index.html site/main.js site/sw.js site/style.css \
                    site/vendor/supabase.js site/vendor/ort.all.bundle.min.mjs \
+                   site/vendor/ort.wasm.bundle.min.mjs \
                    site/models/yolov8_plate.onnx site/models/ppocr_rec.onnx \
                    site/manifest.json; do
             if [ ! -f "$f" ]; then echo "::error::Falta $f en el sitio"; exit 1; fi

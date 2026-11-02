@@ -40,5 +40,25 @@ if ('serviceWorker' in navigator) {
         .then((reg) => console.log('[PWA] Service Worker registrado:', reg.scope))
         .catch((err) => console.warn('[PWA] No se pudo registrar el Service Worker:', err));
     });
+
+    // El Service Worker es el que agrega COOP/COEP (GitHub Pages no deja
+    // mandar headers custom). La PRIMERA navegación la sirve la red, así
+    // que el documento todavía no quedó aislado y ONNX corre single-thread.
+    // Cuando el SW está listo se recarga una sola vez para que la
+    // navegación pase por el SW. El guard en sessionStorage evita bucles.
+    navigator.serviceWorker.ready.then(() => {
+      try {
+        if (crossOriginIsolated) {
+          // Ya estamos aislados: liberar el flag para que otro momento
+          // (por ejemplo, tras un deploy nuevo) se pueda recargar otra vez.
+          sessionStorage.removeItem('platedetect:iso-reload');
+          return;
+        }
+        if (sessionStorage.getItem('platedetect:iso-reload')) return;
+        sessionStorage.setItem('platedetect:iso-reload', '1');
+      } catch (e) { return; }   // sin sessionStorage no recargamos
+      console.log('[PWA] Recargando para activar el modo multi-hilo...');
+      location.reload();
+    }).catch(() => {});
   }
 }
