@@ -31,8 +31,15 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
+      # Vite inyecta import.meta.env.VITE_* en tiempo de build.
+      # Las variables definidas con `env:` a nivel de step tienen prioridad
+      # sobre las del archivo .env. GitHub enmascara automáticamente los
+      # valores de secrets en los logs.
       - name: Build
         run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
