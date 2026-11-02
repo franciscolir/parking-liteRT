@@ -81,9 +81,12 @@ describe('Admin - Ingreso masivo por texto (UI)', () => {
     montarAdmin();
   });
 
-  it('renderiza la pestaña nueva con el textarea y el botón de analizar', () => {
-    const tab = document.querySelector('.admin-tab[data-tab="bulk"]');
+  it('renderiza la sub-vista masiva con el textarea y el botón de analizar', () => {
+    const tab = document.querySelector('.admin-tab[data-tab="plates"]');
     expect(tab).toBeTruthy();
+    // El ingreso masivo ahora es una sub-vista del tab Patentes
+    const subtab = document.querySelector('.admin-subtab[data-subtab="plates-bulk"]');
+    expect(subtab).toBeTruthy();
     expect(document.getElementById('bulk-text')).toBeTruthy();
     expect(document.getElementById('bulk-analyze')).toBeTruthy();
     expect(document.getElementById('bulk-save').disabled).toBe(true);
@@ -106,10 +109,45 @@ describe('Admin - Ingreso masivo por texto (UI)', () => {
     // El botón de guardar se habilita recién después del análisis
     expect(document.getElementById('bulk-save').disabled).toBe(false);
 
-    // Resumen
+    // Resumen: las 3 filas ya nacen con tipo (por defecto special_needs)
     const summary = document.getElementById('bulk-summary').textContent;
     expect(summary).toContain('Se encontraron 3 patentes');
-    expect(summary).toContain('1 requiere revisión');
+    expect(summary).toContain('3 listas para guardar');
+  });
+
+  it('la píldora de duplicados las elimina al presionarla', async () => {
+    const dashboard = montarAdmin();
+    document.getElementById('bulk-text').value = 'ABCD12 ... AB-CD-12';
+    await dashboard.analyzeBulkText();
+
+    expect(document.querySelectorAll('#bulk-table-body tr')).toHaveLength(2);
+
+    // La píldora del resumen es un botón clicable
+    const pill = document.getElementById('bulk-dedup');
+    expect(pill).toBeTruthy();
+
+    pill.click();
+
+    // Queda una sola fila y ya no está marcada como duplicada
+    expect(document.querySelectorAll('#bulk-table-body tr')).toHaveLength(1);
+    expect(dashboard.bulkSession.rows[0].plateStatus).toBe('ok');
+  });
+
+  it('el tab Usuarios alterna entre registrados y flotantes con las sub-tabs', () => {
+    montarAdmin();
+
+    // Solo 4 tabs: Home, Usuarios, Patentes, Escaneos
+    expect(document.querySelectorAll('.admin-tab')).toHaveLength(4);
+
+    // Registrados activo por defecto; Flotantes contiene los accesos
+    expect(document.getElementById('admin-subtab-users-registered').classList.contains('active')).toBe(true);
+    expect(document.getElementById('admin-subtab-users-floating').classList.contains('active')).toBe(false);
+    expect(document.getElementById('admin-whitelist-list')).toBeTruthy();
+    expect(document.getElementById('admin-floating-sessions')).toBeTruthy();
+
+    document.querySelector('.admin-subtab[data-subtab="users-floating"]').click();
+    expect(document.getElementById('admin-subtab-users-floating').classList.contains('active')).toBe(true);
+    expect(document.getElementById('admin-subtab-users-registered').classList.contains('active')).toBe(false);
   });
 
   it('permite editar la patente y el tipo directamente en la celda', async () => {

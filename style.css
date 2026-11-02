@@ -2146,3 +2146,49 @@ body.is-guest-login #install-banner { display: none !important; }
   display: block;
   margin: 8px auto 0;
 }
+/* ============================ ADMIN SUB-TABS ============================ */
+/* Mismo look & feel que .admin-tabs: pastillas sobre superficie oscura */
+.admin-subtabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 16px 12px;
+  padding: 4px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,.06);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.admin-subtabs::-webkit-scrollbar { display: none; }
+
+.admin-subtab {
+  flex: 1;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .2s, color .2s;
+}
+
+.admin-subtab:active { background: rgba(59,130,246,.1); }
+.admin-subtab.active { background: var(--primary); color: #fff; }
+
+.admin-subtab-content { display: none; }
+.admin-subtab-content.active { display: block; }
+
+/* Píldora clicable del resumen masivo (eliminar duplicados) */
+.bulk-chip-btn {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform .1s, filter .15s;
+}
+.bulk-chip-btn:active { transform: scale(.96); filter: brightness(1.2); }

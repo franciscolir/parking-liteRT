@@ -10,7 +10,7 @@
 
 import { supabase, findExistingPlates } from './supabase-client.js';
 import { BulkPlateSession, bulkRowStatus, insertBulkPlates } from './bulk-plates.js';
-import { PLATE_TYPES, TYPE_LABELS, REVIEW_LABEL, getTypeLabel } from './plate-types.js';
+import { PLATE_TYPES, TYPE_LABELS, getTypeLabel } from './plate-types.js';
 
 const PAGE_SIZE = 20;
 
@@ -252,17 +252,9 @@ export class AdminDashboard {
           <svg viewBox="0 0 24 24" width="16" height="16"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 10h2M11 10h2M15 10h2M7 14h10" stroke="currentColor" stroke-width="2"/></svg>
           Patentes
         </button>
-        <button class="admin-tab" data-tab="bulk">
-          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 4h16v16H4z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 9h8M8 13h8M8 17h5" stroke="currentColor" stroke-width="2"/></svg>
-          Ingreso masivo
-        </button>
         <button class="admin-tab" data-tab="scans">
           <svg viewBox="0 0 24 24" width="16" height="16"><path d="M3 3v18h18" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 14l4-4 4 4 5-5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
           Escaneos
-        </button>
-        <button class="admin-tab" data-tab="access">
-          <svg viewBox="0 0 24 24" width="16" height="16"><rect x="3" y="11" width="18" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-          Accesos
         </button>
       </div>
 
@@ -289,80 +281,126 @@ export class AdminDashboard {
         <div id="admin-recent-scans" class="admin-list"></div>
       </div>
 
-      <!-- ============ TAB: USERS ============ -->
+      <!-- ============ TAB: USUARIOS (registrados + flotantes) ============ -->
       <div class="admin-tab-content" id="admin-tab-users">
-        <div class="search-box">
-          <svg class="search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m21 21-4.3-4.3" stroke="currentColor" stroke-width="2"/></svg>
-          <input type="text" id="admin-user-search" placeholder="Buscar por email o nombre..." autocomplete="off">
+        <div class="admin-subtabs">
+          <button class="admin-subtab active" data-subtab="users-registered">📋 Registrados</button>
+          <button class="admin-subtab" data-subtab="users-floating">👥 Flotantes</button>
         </div>
-        <div id="admin-users-list" class="admin-list"></div>
+
+        <!-- Sub-vista: usuarios registrados (con cuenta) -->
+        <div class="admin-subtab-content active" id="admin-subtab-users-registered">
+          <div class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m21 21-4.3-4.3" stroke="currentColor" stroke-width="2"/></svg>
+            <input type="text" id="admin-user-search" placeholder="Buscar por email o nombre..." autocomplete="off">
+          </div>
+          <div id="admin-users-list" class="admin-list"></div>
+        </div>
+
+        <!-- Sub-vista: usuarios flotantes (ingresan solo con nombre) -->
+        <div class="admin-subtab-content" id="admin-subtab-users-floating">
+          <div class="admin-section-header">
+            <h3>🟢 Sesiones activas</h3>
+          </div>
+          <div id="admin-floating-sessions" class="admin-list"></div>
+
+          <div class="admin-section-header">
+            <h3>🔐 Nombres autorizados</h3>
+          </div>
+          <div class="admin-toolbar">
+            <button class="btn-primary btn-small" id="admin-add-access">+ Agregar nombre</button>
+          </div>
+          <div id="admin-whitelist-list" class="admin-list"></div>
+
+          <div class="admin-section-header">
+            <h3>⚙️ Configuración</h3>
+          </div>
+          <div class="admin-card">
+            <div class="admin-card-main">
+              <div class="admin-card-title">Timeout de sesión</div>
+              <div class="admin-card-sub">Minutos antes de liberar un nombre automáticamente</div>
+            </div>
+            <div class="admin-card-actions" style="display:flex;gap:6px;align-items:center;">
+              <input type="number" id="admin-timeout-input" min="5" max="1440" step="5" value="30" class="admin-input-number">
+              <button class="btn-small btn-primary" id="admin-timeout-save">Guardar</button>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- ============ TAB: PLATES ============ -->
+      <!-- ============ TAB: PATENTES (individual + masivo) ============ -->
       <div class="admin-tab-content" id="admin-tab-plates">
-        <div class="search-box">
-          <svg class="search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m21 21-4.3-4.3" stroke="currentColor" stroke-width="2"/></svg>
-          <input type="text" id="admin-plate-search" placeholder="Buscar patente..." autocomplete="off">
-        </div>
-        <div class="admin-toolbar">
-          <button class="btn-primary btn-small" id="admin-add-plate">+ Agregar patente</button>
-          <select id="admin-plate-filter" class="admin-select">
-            <option value="">Todas</option>
-            <option value="registered">Registradas</option>
-            <option value="stolen">Denunciadas</option>
-          </select>
-        </div>
-        <div id="admin-plates-list" class="admin-list"></div>
-      </div>
-
-      <!-- ============ TAB: INGRESO MASIVO POR TEXTO ============ -->
-      <div class="admin-tab-content" id="admin-tab-bulk">
-        <div class="bulk-header">
-          <h2>📋 Ingreso masivo por texto</h2>
-          <p class="bulk-hint">
-            Pega uno o varios mensajes de WhatsApp. El sistema analiza el texto,
-            extrae las patentes y muestra una tabla editable.
-            <strong>Nada se guarda hasta que revises y confirmes.</strong>
-          </p>
+        <div class="admin-subtabs">
+          <button class="admin-subtab active" data-subtab="plates-individual">📌 Individual</button>
+          <button class="admin-subtab" data-subtab="plates-bulk">📥 Masivo</button>
         </div>
 
-        <div class="bulk-input-box">
-          <textarea
-            id="bulk-text"
-            class="bulk-textarea"
-            rows="8"
-            spellcheck="false"
-            placeholder="Ej: Buenos días, para hoy ingresan:&#10;ABCD12 visita&#10;BCDF34 proveedor&#10;También viene el vehículo patente AB-CD-13."
-          ></textarea>
-          <div class="bulk-input-actions">
-            <button class="btn-primary btn-small" id="bulk-analyze">🔍 Analizar texto</button>
-            <button class="btn-secondary btn-small" id="bulk-clear">Limpiar</button>
+        <!-- Sub-vista: ingreso individual -->
+        <div class="admin-subtab-content active" id="admin-subtab-plates-individual">
+          <div class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m21 21-4.3-4.3" stroke="currentColor" stroke-width="2"/></svg>
+            <input type="text" id="admin-plate-search" placeholder="Buscar patente..." autocomplete="off">
           </div>
+          <div class="admin-toolbar">
+            <button class="btn-primary btn-small" id="admin-add-plate">+ Agregar patente</button>
+            <select id="admin-plate-filter" class="admin-select">
+              <option value="">Todas</option>
+              <option value="registered">Registradas</option>
+              <option value="stolen">Denunciadas</option>
+            </select>
+          </div>
+          <div id="admin-plates-list" class="admin-list"></div>
         </div>
 
-        <div class="bulk-results hidden" id="bulk-results">
-          <div class="bulk-summary" id="bulk-summary"></div>
-
-          <div class="bulk-table-wrap">
-            <table class="bulk-table">
-              <thead>
-                <tr>
-                  <th>Patente</th>
-                  <th>Tipo</th>
-                  <th>Texto detectado</th>
-                  <th>Estado</th>
-                  <th class="bulk-th-actions"></th>
-                </tr>
-              </thead>
-              <tbody id="bulk-table-body"></tbody>
-            </table>
+        <!-- Sub-vista: ingreso masivo por texto -->
+        <div class="admin-subtab-content" id="admin-subtab-plates-bulk">
+          <div class="bulk-header">
+            <h2>📋 Ingreso masivo por texto</h2>
+            <p class="bulk-hint">
+              Pega uno o varios mensajes de WhatsApp. El sistema analiza el texto,
+              extrae las patentes y muestra una tabla editable.
+              <strong>Nada se guarda hasta que revises y confirmes.</strong>
+            </p>
           </div>
 
-          <div class="bulk-errors hidden" id="bulk-errors"></div>
+          <div class="bulk-input-box">
+            <textarea
+              id="bulk-text"
+              class="bulk-textarea"
+              rows="8"
+              spellcheck="false"
+              placeholder="Ej: Buenos días, para hoy ingresan:&#10;ABCD12 visita&#10;BCDF34 proveedor&#10;También viene el vehículo patente AB-CD-13."
+            ></textarea>
+            <div class="bulk-input-actions">
+              <button class="btn-primary btn-small" id="bulk-analyze">🔍 Analizar texto</button>
+              <button class="btn-secondary btn-small" id="bulk-clear">Limpiar</button>
+            </div>
+          </div>
 
-          <div class="bulk-table-actions">
-            <button class="btn-secondary btn-small" id="bulk-add-row">+ Agregar patente</button>
-            <button class="btn-primary btn-small" id="bulk-save" disabled>💾 Guardar patentes</button>
+          <div class="bulk-results hidden" id="bulk-results">
+            <div class="bulk-summary" id="bulk-summary"></div>
+
+            <div class="bulk-table-wrap">
+              <table class="bulk-table">
+                <thead>
+                  <tr>
+                    <th>Patente</th>
+                    <th>Tipo</th>
+                    <th>Texto detectado</th>
+                    <th>Estado</th>
+                    <th class="bulk-th-actions"></th>
+                  </tr>
+                </thead>
+                <tbody id="bulk-table-body"></tbody>
+              </table>
+            </div>
+
+            <div class="bulk-errors hidden" id="bulk-errors"></div>
+
+            <div class="bulk-table-actions">
+              <button class="btn-secondary btn-small" id="bulk-add-row">+ Agregar patente</button>
+              <button class="btn-primary btn-small" id="bulk-save" disabled>💾 Guardar patentes</button>
+            </div>
           </div>
         </div>
       </div>
@@ -379,33 +417,6 @@ export class AdminDashboard {
           <button class="btn-secondary btn-small" id="admin-refresh-scans">🔄 Actualizar</button>
         </div>
         <div id="admin-scans-list" class="admin-list"></div>
-      </div>
-
-      <!-- ============ TAB: ACCESS ============ -->
-      <div class="admin-tab-content" id="admin-tab-access">
-        <!-- Configuración de timeout -->
-        <div class="admin-section-header">
-          <h3>⚙️ Configuración</h3>
-        </div>
-        <div class="admin-card">
-          <div class="admin-card-main">
-            <div class="admin-card-title">Timeout de sesión</div>
-            <div class="admin-card-sub">Minutos antes de liberar un nombre automáticamente</div>
-          </div>
-          <div class="admin-card-actions" style="display:flex;gap:6px;align-items:center;">
-            <input type="number" id="admin-timeout-input" min="5" max="1440" step="5" value="30" class="admin-input-number">
-            <button class="btn-small btn-primary" id="admin-timeout-save">Guardar</button>
-          </div>
-        </div>
-
-        <!-- Whitelist -->
-        <div class="admin-section-header" style="margin-top:16px;">
-          <h3>🔐 Nombres autorizados</h3>
-        </div>
-        <div class="admin-toolbar">
-          <button class="btn-primary btn-small" id="admin-add-access">+ Agregar nombre</button>
-        </div>
-        <div id="admin-whitelist-list" class="admin-list"></div>
       </div>
 
       <!-- Modal de confirmación -->
@@ -507,12 +518,18 @@ export class AdminDashboard {
   // ============================================================
   // USERS
   // ============================================================
-    async loadSessions() {
-    const list = document.getElementById('admin-sessions-list');
-    if (!list) return;
-    list.innerHTML = '<div class="admin-loading">Cargando...</div>';
-
+  async loadSessions() {
     const { data, error } = await supabase.rpc('get_active_sessions');
+
+    // Las sesiones flotantes se muestran en dos lugares: el Home y la
+    // sub-vista "Flotantes" del tab Usuarios.
+    this.renderSessions(document.getElementById('admin-sessions-list'), data, error);
+    this.renderSessions(document.getElementById('admin-floating-sessions'), data, error);
+  }
+
+  renderSessions(list, data, error) {
+    if (!list) return;
+
     if (error) {
       list.innerHTML = `<div class="admin-error">Error: ${this.escapeHtml(error.message)}</div>`;
       return;
@@ -878,12 +895,11 @@ export class AdminDashboard {
 
   /** HTML de una fila de la tabla. */
   bulkRowHtml(row) {
-    const options = [
-      `<option value=""${row.type ? '' : ' selected'}>${REVIEW_LABEL}</option>`,
-      ...PLATE_TYPES.map(t =>
-        `<option value="${t.value}"${row.type === t.value ? ' selected' : ''}>${t.label}</option>`
-      ),
-    ].join('');
+    // Sin tipo detectado la fila ya nace con el tipo por defecto
+    // (necesidades especiales): el select no ofrece "Revisión necesaria".
+    const options = PLATE_TYPES.map(t =>
+      `<option value="${t.value}"${row.type === t.value ? ' selected' : ''}>${t.label}</option>`
+    ).join('');
 
     const snippet = row.snippet && row.snippet.match
       ? `<span class="bulk-snippet">${this.escapeHtml(row.snippet.before)}<mark>${this.escapeHtml(row.snippet.match)}</mark>${this.escapeHtml(row.snippet.after)}</span>`
@@ -972,7 +988,15 @@ export class AdminDashboard {
 
     if (summary.ready) chips.push(`<span class="bulk-chip ok">${summary.ready} lista${summary.ready === 1 ? '' : 's'} para guardar</span>`);
     if (summary.review) chips.push(`<span class="bulk-chip warn">${summary.review} requiere${summary.review === 1 ? '' : 'n'} revisión</span>`);
-    if (summary.duplicate) chips.push(`<span class="bulk-chip dup">${summary.duplicate} duplicada${summary.duplicate === 1 ? '' : 's'} (${summary.duplicate === 1 ? 'omitida' : 'omitidas'})</span>`);
+    if (summary.duplicate) {
+      // Píldora clicable: al presionarla se ELIMINAN las duplicadas
+      // (queda una sola aparición de cada patente).
+      chips.push(
+        `<button type="button" class="bulk-chip dup bulk-chip-btn" id="bulk-dedup" ` +
+        `title="Eliminar las patentes duplicadas (conserva la primera)">` +
+        `${summary.duplicate} duplicada${summary.duplicate === 1 ? '' : 's'} — clic para eliminar</button>`
+      );
+    }
     if (summary.existing) chips.push(`<span class="bulk-chip dup">${summary.existing} ya existe${summary.existing === 1 ? '' : 'n'}</span>`);
     if (summary.invalid) chips.push(`<span class="bulk-chip err">${summary.invalid} inválida${summary.invalid === 1 ? '' : 's'}</span>`);
 
@@ -1019,6 +1043,20 @@ export class AdminDashboard {
     if (text) text.value = '';
     this.hideBulkErrors();
     this.renderBulkTable();
+  }
+
+  /**
+   * Elimina las patentes duplicadas del lote (píldora "N duplicadas"):
+   * conserva la primera aparición de cada patente y borra el resto.
+   */
+  removeBulkDuplicates() {
+    const removed = this.bulkSession.removeDuplicates();
+    if (!removed) {
+      this.toast('No hay duplicadas para eliminar', 'error');
+      return;
+    }
+    this.renderBulkTable();
+    this.toast(`${removed} duplicada${removed === 1 ? '' : 's'} eliminada${removed === 1 ? '' : 's'}`, 'success');
   }
 
   /** Extrae la patente mencionada en un error de la base de datos. */
@@ -1225,18 +1263,30 @@ export class AdminDashboard {
           await this.loadSessions();
           await this.loadRecentScans();
         } else if (target === 'users') {
+          // El tab unifica registrados y flotantes (accesos): cargar ambos.
           await this.loadUsers();
-        } else if (target === 'plates') {
-          await this.loadPlates();
-        } else if (target === 'bulk') {
-          this.hideBulkErrors();
-        } else if (target === 'scans') {
-          await this.loadScans();
-        } else if (target === 'access') {
+          await this.loadSessions();
           await this.loadWhitelist();
           await this.loadTimeoutConfig();
+        } else if (target === 'plates') {
+          await this.loadPlates();
+        } else if (target === 'scans') {
+          await this.loadScans();
         }
       };
+    });
+
+    // Sub-tabs dentro de una pestaña (Registrados/Flotantes,
+    // Individual/Masivo): muestran/ocultan sin recargar nada.
+    document.querySelectorAll('.admin-subtab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const parent = btn.closest('.admin-tab-content');
+        if (!parent) return;
+        parent.querySelectorAll('.admin-subtab').forEach(b => b.classList.toggle('active', b === btn));
+        parent.querySelectorAll('.admin-subtab-content').forEach(c => {
+          c.classList.toggle('active', c.id === `admin-subtab-${btn.dataset.subtab}`);
+        });
+      });
     });
 
     // Búsqueda de usuarios (debounced)
@@ -1299,6 +1349,14 @@ export class AdminDashboard {
     const bulkSave = document.getElementById('bulk-save');
     if (bulkSave) {
       bulkSave.addEventListener('click', () => this.saveBulkPlates());
+    }
+
+    // Píldora de duplicados del resumen: la presionan y se eliminan.
+    const bulkSummary = document.getElementById('bulk-summary');
+    if (bulkSummary) {
+      bulkSummary.addEventListener('click', (e) => {
+        if (e.target.closest('#bulk-dedup')) this.removeBulkDuplicates();
+      });
     }
 
     const bulkBody = document.getElementById('bulk-table-body');

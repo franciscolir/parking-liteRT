@@ -21,9 +21,9 @@ describe('bulk-plates.js', () => {
       expect(session.analyzed).toBe(true);
       expect(session.rows).toHaveLength(3);
       expect(session.rows.map(r => r.plate)).toEqual(['ABCD12', 'BCDF34', 'ABCD13']);
-      // Sin tipo detectable -> necesita revisión
-      expect(session.rows.every(r => r.type === null)).toBe(true);
-      expect(session.rows.every(r => r.needsReview)).toBe(true);
+      // Sin tipo detectable -> por defecto 'special_needs' (no bloquea el guardado)
+      expect(session.rows.every(r => r.type === 'special_needs')).toBe(true);
+      expect(session.rows.every(r => !r.needsReview)).toBe(true);
     });
 
     it('detecta duplicados dentro del texto y los deja fuera del guardado', () => {
@@ -70,7 +70,9 @@ describe('bulk-plates.js', () => {
       session.analyze('ABCD12', []);
       const row = session.rows[0];
 
-      expect(session.validate().ok).toBe(false); // falta el tipo
+      // El tipo por defecto ya permite guardar sin tocar nada
+      expect(session.rows[0].type).toBe('special_needs');
+      expect(session.validate().ok).toBe(true);
 
       session.updateType(row.id, 'administration');
       expect(session.rows[0].type).toBe('administration');
@@ -83,7 +85,8 @@ describe('bulk-plates.js', () => {
       const session = new BulkPlateSession();
       session.analyze('ABCD12', []);
       session.updateType(session.rows[0].id, 'registered');
-      expect(session.rows[0].type).toBeNull();
+      // Un tipo inválido vuelve al tipo por defecto (no deja la fila sin tipo)
+      expect(session.rows[0].type).toBe('special_needs');
     });
 
     it('16. permite eliminar una detección', () => {
@@ -111,11 +114,12 @@ describe('bulk-plates.js', () => {
       expect(row.id).toBeTruthy();
     });
 
-    it('una fila manual sin tipo queda en revisión', () => {
+    it('una fila manual sin tipo toma el tipo por defecto', () => {
       const session = new BulkPlateSession();
       session.addManualRow('WXYZ98');
-      expect(session.rows[0].needsReview).toBe(true);
-      expect(session.validate().errors[0].message).toContain('Falta el tipo');
+      expect(session.rows[0].type).toBe('special_needs');
+      expect(session.rows[0].needsReview).toBe(false);
+      expect(session.validate().ok).toBe(true);
     });
   });
 
@@ -138,19 +142,42 @@ describe('bulk-plates.js', () => {
       expect(toSave[0].id).toBe(session.rows[1].id);
       expect(session.rows[0].include).toBe(false);
     });
+
+    it('removeDuplicates elimina las repeticiones y conserva la primera', () => {
+      const session = new BulkPlateSession();
+      session.analyze('ABCD12 ... AB-CD-12 ... ABCD12', []);
+      expect(session.rows).toHaveLength(3);
+      expect(session.rows.every(r => r.plateStatus === 'duplicate')).toBe(true);
+
+      const removed = session.removeDuplicates();
+      expect(removed).toBe(2);
+      expect(session.rows).toHaveLength(1);
+      // La sobreviviente ya no está marcada como duplicada
+      expect(session.rows[0].plateStatus).toBe('ok');
+      expect(session.validate().toSave).toHaveLength(1);
+    });
+
+    it('removeDuplicates no toca las filas sin duplicados', () => {
+      const session = new BulkPlateSession();
+      session.analyze('ABCD12\nBCDF34', []);
+      expect(session.removeDuplicates()).toBe(0);
+      expect(session.rows).toHaveLength(2);
+    });
   });
 
   describe('validación y resumen', () => {
-    it('informa las filas que requieren revisión', () => {
+    it('solo las filas dudosas requieren revisión', () => {
+      // La línea limpia queda a >30 chars de "casa" (keyword negativa),
+      // así que solo "la casa 12" se marca como dudosa.
       const session = new BulkPlateSession();
-      session.analyze('ABCD12\nBCDF34', []);
+      session.analyze('ABCD12 entra temprano por la puerta principal\nla casa 12 queda al lado', []);
 
       const { errors, summary } = session.validate();
-      expect(errors).toHaveLength(2);
-      expect(errors[0].message).toContain('Falta el tipo');
+      // ABCD12 queda lista con el tipo por defecto; la dudosa pide revisión
       expect(summary.total).toBe(2);
-      expect(summary.review).toBe(2);
-      expect(summary.ready).toBe(0);
+      expect(summary.ready).toBe(1);
+      expect(summary.review).toBe(1);
+      expect(errors.some(e => e.message.includes('requiere revisión'))).toBe(true);
     });
 
     it('bloquea el guardado si la patente editada es inválida', () => {

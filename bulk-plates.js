@@ -21,6 +21,13 @@ import { validatePlate, normalizePlate } from './validator.js';
 import { isValidPlateType } from './plate-types.js';
 import { parsePlateText } from './plate-parser.js';
 
+/**
+ * Tipo por defecto cuando el texto no indica uno: "no sé qué es" se
+ * interpreta como necesidades especiales (regla del producto). Así una
+ * fila recién analizada ya está lista para guardar.
+ */
+export const DEFAULT_PLATE_TYPE = 'special_needs';
+
 /** Estados visibles en la columna "Estado". */
 export const BULK_STATUS = {
   detected: { label: 'Detectada', cls: 'detected' },
@@ -83,6 +90,7 @@ export class BulkPlateSession {
     this.rows = parsed.rows.map(row => ({
       ...row,
       plateInput: row.plate,
+      type: isValidPlateType(row.type) ? row.type : DEFAULT_PLATE_TYPE,
       include: !row.duplicateOf && !this.existingMap.has(row.plate),
       manual: false,
     }));
@@ -126,11 +134,11 @@ export class BulkPlateSession {
     return row;
   }
 
-  /** Cambia el tipo de una fila (null = "Revisión necesaria"). */
+  /** Cambia el tipo de una fila. Un valor inválido vuelve al tipo por defecto. */
   updateType(id, value) {
     const row = this.get(id);
     if (!row) return null;
-    row.type = isValidPlateType(value) ? value : null;
+    row.type = isValidPlateType(value) ? value : DEFAULT_PLATE_TYPE;
     this.recompute();
     return row;
   }
@@ -170,6 +178,27 @@ export class BulkPlateSession {
     return true;
   }
 
+  /**
+   * Elimina las filas duplicadas: de cada grupo de repeticiones conserva
+   * la primera aparición y borra el resto. Es lo que hace la píldora
+   * "N duplicadas" del resumen.
+   * @returns {number} cantidad de filas eliminadas
+   */
+  removeDuplicates() {
+    const seen = new Set();
+    const toRemove = [];
+    for (const row of this.rows) {
+      if (row.plateStatus !== PLATE_STATUS.duplicate || !row.plate) continue;
+      if (seen.has(row.plate)) {
+        toRemove.push(row.id);
+      } else {
+        seen.add(row.plate);
+      }
+    }
+    for (const id of toRemove) this.removeRow(id);
+    return toRemove.length;
+  }
+
   /** Agrega una fila manual (el usuario la escribe a mano). */
   addManualRow(plate = '', type = null) {
     const id = `m${++this._seq}`;
@@ -178,7 +207,7 @@ export class BulkPlateSession {
       raw: plate,
       plate: normalizePlate(plate),
       plateInput: plate,
-      type: isValidPlateType(type) ? type : null,
+      type: isValidPlateType(type) ? type : DEFAULT_PLATE_TYPE,
       doubtful: false,
       duplicateOf: null,
       existing: false,
