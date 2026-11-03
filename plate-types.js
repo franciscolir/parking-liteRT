@@ -8,11 +8,19 @@
  * NO inventar valores nuevos: el tipo se guarda tal cual en `plates.type`.
  */
 
-/** Los 3 tipos de patente válidos, con su etiqueta y clase de color. */
+/**
+ * Los 3 tipos de patente válidos, con su etiqueta y clase de color.
+ *
+ * `cls`      → color del CONTADOR por tipo (mini cards NE/AD/PA): cada
+ *              tipo tiene su color para distinguirlos de un vistazo.
+ * `stateCls` → color de los BADGES: ahí el color indica el ESTADO de la
+ *              patente (verde = registrada, rojo = primeros auxilios),
+ *              no el tipo. El tipo se lee en la etiqueta de texto.
+ */
 export const PLATE_TYPES = [
-  { value: 'special_needs', label: 'Necesidades especiales', abbr: 'NE', cls: 'warn' },
-  { value: 'administration', label: 'Administración', abbr: 'AD', cls: 'reg' },
-  { value: 'first_aid', label: 'Primeros auxilios', abbr: 'PA', cls: 'stolen' },
+  { value: 'special_needs', label: 'Necesidades especiales', abbr: 'NE', cls: 'warn', stateCls: 'reg' },
+  { value: 'administration', label: 'Administración', abbr: 'AD', cls: 'reg', stateCls: 'reg' },
+  { value: 'first_aid', label: 'Primeros auxilios', abbr: 'PA', cls: 'stolen', stateCls: 'stolen' },
 ];
 
 /** Solo los valores válidos: ['special_needs', 'administration', 'first_aid'] */
@@ -20,12 +28,34 @@ export const PLATE_TYPE_VALUES = PLATE_TYPES.map(t => t.value);
 
 /** Mapa { valor: { label, cls } } para pintar badges. */
 export const TYPE_LABELS = PLATE_TYPES.reduce((acc, t) => {
-  acc[t.value] = { label: t.label, cls: t.cls };
+  acc[t.value] = { label: t.label, cls: t.stateCls };
   return acc;
 }, {});
 
 /** Texto mostrado cuando el tipo no se pudo determinar. */
 export const REVIEW_LABEL = 'Revisión necesaria';
+
+/**
+ * Estados de un escaneo (columna `scan_history.status`).
+ *
+ * El valor guardado es el TIPO de la patente (special_needs /
+ * administration / first_aid) o 'unknown' / 'error'. Se aceptan también los
+ * valores antiguos ('success' / 'danger' / 'warning') por si quedaron filas
+ * viejas en la base.
+ */
+export const SCAN_STATUS_LABELS = {
+  ...TYPE_LABELS,
+  unknown: { label: 'Desconocido', cls: 'unk' },
+  error: { label: 'Error', cls: 'unk' },
+  success: { label: 'Registrado', cls: 'reg' },
+  danger: { label: 'Denunciado', cls: 'stolen' },
+  warning: { label: 'Desconocido', cls: 'unk' },
+};
+
+/** Etiqueta y color de un escaneo a partir de su status. */
+export function getScanStatus(status) {
+  return SCAN_STATUS_LABELS[status] || { label: status || 'Desconocido', cls: 'unk' };
+}
 
 /** ¿El valor corresponde a uno de los 3 tipos válidos? */
 export function isValidPlateType(value) {

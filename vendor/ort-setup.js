@@ -42,33 +42,44 @@ export const HAS_WEBGPU = forced === 'wasm'
 // ------------------------------------------------------------
 // Hilos del WASM
 // ------------------------------------------------------------
-// 1 (single-thread) por defecto.
+// El número de hilos depende del dispositivo:
 //
-// ORT con varios hilos arranca Workers de pthread cargados desde el propio
-// origen. Con el Service Worker activo, esas peticiones se responden desde
-// la caché y el navegador las BLOQUEA (net::ERR_BLOCKED_BY_RESPONSE): el
-// WASM queda esperando a un worker que nunca arranca y la carga de los
-// modelos se cuelga para siempre ("Cargando detector YOLOv8...").
+//   - Con WebGPU (escritorio): 1 hilo. La GPU hace el trabajo pesado y
+//     medir en producción no mostró diferencia (1 hilo = 229-310 ms por
+//     inferencia, 4 hilos = 237-366 ms).
 //
-// Con 1 hilo no hace falta ningún Worker: el WASM se instancia en el hilo
-// principal y los modelos cargan siempre.
+//   - Sin WebGPU (móviles, build CPU): multi-hilo (2-4 según núcleos).
+//     Con 1 hilo la inferencia bloquea el hilo principal del navegador
+//     (medido: 503 ms en escritorio, varios segundos en un teléfono):
+//     la UI se congela, el recuadro verde no aparece y ningún botón
+//     responde. Con 4 hilos la inferencia baja a 200 ms y el hilo
+//     principal queda libre.
 //
-// Con >1 hilos el problema se esquiva usando el glue de jsDelivr: ORT lo
-// baja a un blob: y los Workers de pthread nacen de blob:, que el Service
-// Worker no intercepta (ver resolveWasmPaths). Se activa con ?threads=4.
+// El multi-hilo necesita el glue de jsDelivr (ver resolveWasmPaths): con el
+// glue same-origin el Service Worker bloquea los Workers de pthread.
 //
-// En escritorio (WebGPU) el multi-hilo NO aporta: medido en producción,
-// 1 hilo = 229-310 ms por inferencia y 4 hilos = 237-366 ms. Por eso el
-// default es 1: más simple, menos memoria y siempre funciona.
+// Se puede forzar con ?threads=N (o ?threads=1 para desactivar el
+// multi-hilo en un móvil).
 export const DEFAULT_THREADS = 1;
+export const MAX_THREADS = 4;
 
 const forcedThreads = Number(
   (typeof location !== 'undefined' && new URLSearchParams(location.search).get('threads')) || 0
 ) || 0;
 
+const defaultCores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 2;
+
 /** Resuelve cuántos hilos debe usar el WASM. */
-export function resolveNumThreads({ forced: forcedValue = forcedThreads, fallback = DEFAULT_THREADS } = {}) {
-  return Number.isFinite(forcedValue) && forcedValue > 0 ? Math.floor(forcedValue) : fallback;
+export function resolveNumThreads({
+  forced = forcedThreads,
+  webgpu = HAS_WEBGPU,
+  cores = defaultCores,
+  fallback = DEFAULT_THREADS,
+} = {}) {
+  if (Number.isFinite(forced) && forced > 0) return Math.floor(forced);
+  if (webgpu) return fallback;
+  const n = Math.ceil((Number(cores) || 2) / 2);
+  return Math.min(MAX_THREADS, Math.max(2, n));
 }
 
 /**
@@ -98,21 +109,59 @@ export function resolveWasmPaths(numThreads, {
 export const ORT_EXECUTION_PROVIDERS = HAS_WEBGPU ? ['webgpu', 'wasm'] : ['wasm'];
 
 let ortPromise = null;
+let ortFallback = null;          // instancia single-thread si el multi-hilo falla
+let ortFallbackPromise = null;   // promesa compartida: el detector y el OCR
+                                  // pueden fallar a la vez y deben caer en
+                                  // la MISMA instancia (si no, los Tensor
+                                  // quedan de un módulo y la sesión de otro)
 
 /**
  * Carga (una sola vez) el runtime de ONNX.
  * @returns {Promise<typeof import('./ort.all.bundle.min.mjs')>}
  */
 export function getOrt() {
+  if (ortFallback) return Promise.resolve(ortFallback);
   if (!ortPromise) ortPromise = loadOrt();
   return ortPromise;
 }
 
-async function loadOrt() {
-  const mod = HAS_WEBGPU
-    ? await import('./ort.all.bundle.min.mjs')
-    : await import('./ort.wasm.bundle.min.mjs');
+/**
+ * Crea una sesión de inferencia.
+ *
+ * Si el multi-hilo falla (SharedArrayBuffer no disponible, el navegador no
+ * soporta pthread workers, el CDN no responde...) se reintenta con 1 hilo y
+ * el glue local, que es la configuración que funciona en todas partes.
+ */
+export async function createSession(model, options = {}) {
+  const ort = await getOrt();
+  try {
+    return await ort.InferenceSession.create(model, options);
+  } catch (err) {
+    if (resolveNumThreads() <= 1) throw err;
+    console.warn('[ORT] el multi-hilo falló, reintento con 1 hilo:', err?.message || err);
+    const single = await getSingleThreadOrt();
+    return await single.InferenceSession.create(model, options);
+  }
+}
 
+function getSingleThreadOrt() {
+  if (!ortFallbackPromise) {
+    ortFallbackPromise = loadOrt({ threads: 1, fresh: true })
+      .then((ort) => { ortFallback = ort; return ort; });
+  }
+  return ortFallbackPromise;
+}
+
+async function importOrt(fresh = false) {
+  const url = HAS_WEBGPU ? './ort.all.bundle.min.mjs' : './ort.wasm.bundle.min.mjs';
+  // Una instancia "fresca" (con query) es un módulo aparte: sirve para
+  // reintentar con otra config porque ORT no permite reinicializar el WASM
+  // dentro del mismo módulo.
+  return fresh ? import(/* @vite-ignore */ url + '?single=1') : import(url);
+}
+
+async function loadOrt({ threads = resolveNumThreads(), fresh = false } = {}) {
+  const mod = await importOrt(fresh);
   const ort = mod;
 
   // El glue va desde nuestro origen (relative al propio módulo) y el WASM
@@ -120,11 +169,10 @@ async function loadOrt() {
   // wasmPaths es un string; con el formato {mjs, wasm} hay que pasar la
   // URL completa del .wasm.
   //
-  // Los hilos se fuerzan explícitamente (1 por defecto): si se deja que ORT
-  // los elija, con el documento cross-origin isolated usa varios y el
-  // Service Worker bloquea los Workers de pthread (ERR_BLOCKED_BY_RESPONSE)
-  // → la carga de los modelos se queda colgada para siempre.
-  const threads = resolveNumThreads();
+  // Los hilos se fuerzan explícitamente (nunca los elige ORT): si está
+  // isolated y el multi-hilo está activo, ORT crea Workers de pthread que el
+  // Service Worker no puede servir (ERR_BLOCKED_BY_RESPONSE) y la carga de
+  // los modelos se queda colgada para siempre.
   ort.env.wasm.numThreads = threads;
   ort.env.wasm.wasmPaths = resolveWasmPaths(threads);
 

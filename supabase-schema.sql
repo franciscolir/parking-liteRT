@@ -213,11 +213,12 @@ create or replace function public.increment_scan_stat(
 ) returns void language plpgsql security definer as $$
 declare
   -- Espejo de countScan() en app-supabase.js:
-  -- administration -> registered_count, first_aid -> stolen_count,
-  -- el resto (special_needs, unknown, error) -> unknown_count
-  v_reg_inc integer := case when p_status = 'administration' then 1 else 0 end;
+  -- administration / special_needs -> registered_count (están registradas)
+  -- first_aid -> stolen_count
+  -- unknown / error -> unknown_count
+  v_reg_inc integer := case when p_status in ('administration', 'special_needs') then 1 else 0 end;
   v_sto_inc integer := case when p_status = 'first_aid' then 1 else 0 end;
-  v_unk_inc integer := case when p_status not in ('administration', 'first_aid') then 1 else 0 end;
+  v_unk_inc integer := case when p_status not in ('administration', 'special_needs', 'first_aid') then 1 else 0 end;
 begin
   insert into public.scan_stats (user_id, total_scans, registered_count, stolen_count, unknown_count, last_scan_at)
   values (p_user_id, 1, v_reg_inc, v_sto_inc, v_unk_inc, now())

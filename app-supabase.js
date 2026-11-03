@@ -3,7 +3,7 @@ import { Camera } from './camera.js';
 import { PlateDetector } from './detector.js';
 import { PlateOCR } from './ocr.js';
 import { validatePlate, normalizePlate } from './validator.js';
-import { TYPE_LABELS } from './plate-types.js';
+import { TYPE_LABELS, getScanStatus } from './plate-types.js';
 import { Corrector } from './corrector.js';
 import { AdminDashboard } from './admin.js';
 import {
@@ -1107,18 +1107,25 @@ async function syncPlate(plate, localType) {
     });
   } catch (e) {
     console.warn('Error guardando scan:', e);
-    // El historial local usa la clase CSS (success/danger/warning)
-    scanHistory.unshift({ plate, status: plateStatusInfo(type).css, time: Date.now() });
+    // El historial local guarda el TIPO (igual que la base), no la clase CSS.
+    scanHistory.unshift({ plate, status: type, time: Date.now() });
     if (scanHistory.length > 20) scanHistory.pop();
     localStorage.setItem('plateHistory', JSON.stringify(scanHistory));
     localStorage.setItem('plateStats', JSON.stringify(scanCount));
   }
 }
 
+/**
+ * Estados posibles de un escaneo (columna `scan_history.status`).
+ *
+ * El valor guardado es el TIPO de la patente (special_needs /
+ * administration / first_aid) o 'unknown' / 'error'. Ver getScanStatus()
+ * en plate-types.js (fuente única de verdad, la usa también el admin).
+ */
 function countScan(type) {
   scanCount.total = (scanCount.total || 0) + 1;
   if (type === 'first_aid') scanCount.stolen = (scanCount.stolen || 0) + 1;
-  else if (type === 'administration') scanCount.registered = (scanCount.registered || 0) + 1;
+  else if (type === 'administration' || type === 'special_needs') scanCount.registered = (scanCount.registered || 0) + 1;
   else scanCount.unknown = (scanCount.unknown || 0) + 1;
 }
 
@@ -1129,7 +1136,9 @@ function plateStatusInfo(type) {
   } else if (type === 'administration') {
     return { st: '🏢 ADMINISTRACIÓN', css: 'success', ico: '🏢' };
   } else if (type === 'special_needs') {
-    return { st: '♿ NECESIDADES ESPECIALES', css: 'warning', ico: '♿' };
+    // Registrada: se muestra en verde (como el resto de las registradas).
+    // El tipo se distingue por el ícono ♿ y por el texto.
+    return { st: '♿ NECESIDADES ESPECIALES', css: 'success', ico: '♿' };
   } else {
     return { st: '⚠ NO REGISTRADO', css: 'warning', ico: '🔴' };
   }
@@ -1163,12 +1172,15 @@ function updateHistory() {
   if (!list) return;
   if (!scanHistory.length) { list.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">Sin detecciones recientes</div>'; return; }
   list.innerHTML = scanHistory.slice(0, 10).map(h => {
-    const sc = h.status === 'success' ? 'reg' : h.status === 'danger' ? 'stolen' : 'unk';
-    const st = h.status === 'success' ? 'Registrado' : h.status === 'danger' ? 'Denunciado' : 'Desconocido';
+    // `status` es el tipo de la patente (special_needs / administration /
+    // first_aid / unknown), no la clase CSS: antes se comparaba con
+    // 'success'/'danger' y toda patente registrada salía como
+    // "Desconocido".
+    const st = getScanStatus(h.status);
     const isReg = platesCache.administration?.includes(h.plate) || platesCache.special_needs?.includes(h.plate) || platesCache.first_aid?.includes(h.plate);
     const clickHandler = isReg ? '' : ` onclick="requestRegistration('${h.plate}')"`;
     const cls = isReg ? '' : ' clickable';
-    return `<div class="history-item${cls}"${clickHandler}><span class="h-plate">${h.plate}</span><span class="h-status ${sc}">${st}</span></div>`;
+    return `<div class="history-item${cls}"${clickHandler}><span class="h-plate">${h.plate}</span><span class="h-status ${st.cls}">${st.label}</span></div>`;
   }).join('');
 }
 

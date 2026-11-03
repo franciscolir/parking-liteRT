@@ -1,4 +1,4 @@
-import { getOrt, ORT_EXECUTION_PROVIDERS } from './vendor/ort-setup.js';
+import { getOrt, createSession, ORT_EXECUTION_PROVIDERS } from './vendor/ort-setup.js';
 
 export class PlateOCR {
   constructor() {
@@ -15,12 +15,15 @@ export class PlateOCR {
     try {
       this.ort = await getOrt();
       const [session, chars] = await Promise.all([
-        this.ort.InferenceSession.create(modelPath, {
+        createSession(modelPath, {
           executionProviders: ORT_EXECUTION_PROVIDERS,
         }),
         fetch(keysPath).then(r => r.json()),
       ]);
       this.session = session;
+      // createSession puede haber caído al runtime single-thread: los
+      // Tensor hay que crearlos con la misma instancia que la sesión.
+      this.ort = await getOrt();
       this.chars = chars;
       this.mock = false;
     } catch (e) {

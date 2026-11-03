@@ -1,22 +1,42 @@
 import { describe, it, expect } from 'vitest';
-import { resolveNumThreads, resolveWasmPaths, DEFAULT_THREADS, ORT_WASM_CDN } from '../../vendor/ort-setup.js';
+import {
+  resolveNumThreads,
+  resolveWasmPaths,
+  DEFAULT_THREADS,
+  MAX_THREADS,
+  ORT_WASM_CDN,
+} from '../../vendor/ort-setup.js';
 
 describe('ort-setup · hilos del WASM', () => {
-  it('usa 1 hilo por defecto (los Workers de pthread se bloquean con el Service Worker)', () => {
+  it('usa 1 hilo con WebGPU (la GPU hace el trabajo pesado)', () => {
     expect(DEFAULT_THREADS).toBe(1);
-    expect(resolveNumThreads({})).toBe(1);
-    expect(resolveNumThreads({ forced: 0 })).toBe(1);
+    expect(resolveNumThreads({ webgpu: true, cores: 8 })).toBe(1);
+    expect(resolveNumThreads({ webgpu: true, cores: 2 })).toBe(1);
+  });
+
+  it('usa multi-hilo sin WebGPU (móviles: la inferencia no debe congelar la UI)', () => {
+    expect(resolveNumThreads({ webgpu: false, cores: 8 })).toBe(4);
+    expect(resolveNumThreads({ webgpu: false, cores: 4 })).toBe(2);
+    expect(resolveNumThreads({ webgpu: false, cores: 2 })).toBe(2);
+    expect(resolveNumThreads({ webgpu: false, cores: 1 })).toBe(2);
+  });
+
+  it('nunca supera el máximo de hilos', () => {
+    expect(resolveNumThreads({ webgpu: false, cores: 64 })).toBe(MAX_THREADS);
   });
 
   it('permite forzar el número de hilos con ?threads=N', () => {
     expect(resolveNumThreads({ forced: 4 })).toBe(4);
     expect(resolveNumThreads({ forced: 2 })).toBe(2);
+    expect(resolveNumThreads({ forced: 1, webgpu: false, cores: 8 })).toBe(1);
   });
 
-  it('ignora valores inválidos', () => {
-    expect(resolveNumThreads({ forced: -1 })).toBe(1);
-    expect(resolveNumThreads({ forced: NaN })).toBe(1);
-    expect(resolveNumThreads({ forced: 'x' })).toBe(1);
+  it('ignora valores inválidos y usa el default del dispositivo', () => {
+    const cpu = { webgpu: false, cores: 4 };   // -> 2 hilos
+    expect(resolveNumThreads({ ...cpu, forced: -1 })).toBe(2);
+    expect(resolveNumThreads({ ...cpu, forced: NaN })).toBe(2);
+    expect(resolveNumThreads({ ...cpu, forced: 'x' })).toBe(2);
+    expect(resolveNumThreads({ ...cpu, forced: 0 })).toBe(2);
   });
 });
 

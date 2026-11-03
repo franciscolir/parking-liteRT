@@ -10,7 +10,7 @@
 
 import { supabase, findExistingPlates } from './supabase-client.js';
 import { BulkPlateSession, bulkRowStatus, insertBulkPlates } from './bulk-plates.js';
-import { PLATE_TYPES, TYPE_LABELS, getTypeLabel } from './plate-types.js';
+import { PLATE_TYPES, TYPE_LABELS, getTypeLabel, getScanStatus } from './plate-types.js';
 
 const PAGE_SIZE = 20;
 
@@ -589,14 +589,8 @@ export class AdminDashboard {
       return;
     }
 
- const statusMap = {
-  ...TYPE_LABELS,
-  unknown: { label: 'Desconocido', cls: 'unk' },
-  error: { label: 'Error', cls: 'unk' },
-};
-
     list.innerHTML = data.map(s => {
-      const st = statusMap[s.status] || { label: s.status, cls: 'unk' };
+      const st = getScanStatus(s.status);
       return `
         <div class="admin-card">
           <div class="admin-card-main">
@@ -1307,14 +1301,8 @@ export class AdminDashboard {
       return;
     }
 
-   const statusMap = {
-  ...TYPE_LABELS,
-  unknown: { label: 'Desconocido', cls: 'unk' },
-  error: { label: 'Error', cls: 'unk' },
-};
-
     list.innerHTML = scans.map(s => {
-      const st = statusMap[s.status] || { label: s.status, cls: 'unk' };
+      const st = getScanStatus(s.status);
       const userEmail = s.users?.email || 'Anónimo';
       return `
         <div class="admin-card">

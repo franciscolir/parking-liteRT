@@ -4,8 +4,10 @@ import {
   PLATE_TYPE_VALUES,
   TYPE_LABELS,
   REVIEW_LABEL,
+  SCAN_STATUS_LABELS,
   isValidPlateType,
   getTypeLabel,
+  getScanStatus,
   detectPlateType,
 } from '../../plate-types.js';
 
@@ -40,6 +42,46 @@ describe('plate-types.js', () => {
     expect(getTypeLabel('first_aid')).toBe('Primeros auxilios');
     expect(getTypeLabel('desconocido')).toBe('desconocido');
     expect(getTypeLabel(null)).toBe('');
+  });
+
+  describe('getScanStatus', () => {
+    it('muestra el tipo de la patente, no "Desconocido"', () => {
+      // Bug: el historial comparaba el status contra 'success'/'danger'
+      // (clases CSS) y toda patente registrada salía como desconocida.
+      expect(getScanStatus('special_needs').label).toBe('Necesidades especiales');
+      expect(getScanStatus('administration').label).toBe('Administración');
+      expect(getScanStatus('first_aid').label).toBe('Primeros auxilios');
+      expect(getScanStatus('unknown').label).toBe('Desconocido');
+      expect(getScanStatus('error').label).toBe('Error');
+    });
+
+    it('una patente registrada no se pinta como desconocida', () => {
+      expect(getScanStatus('special_needs').cls).not.toBe('unk');
+      expect(getScanStatus('administration').cls).not.toBe('unk');
+      expect(getScanStatus('first_aid').cls).not.toBe('unk');
+      expect(getScanStatus('unknown').cls).toBe('unk');
+    });
+
+    it('acepta los valores antiguos guardados en la base', () => {
+      expect(getScanStatus('success').label).toBe('Registrado');
+      expect(getScanStatus('danger').label).toBe('Denunciado');
+      expect(getScanStatus('warning').label).toBe('Desconocido');
+    });
+
+    it('cae en Desconocido si el status no existe', () => {
+      expect(getScanStatus('raro').label).toBe('raro');
+      expect(getScanStatus('raro').cls).toBe('unk');
+      expect(getScanStatus(null).label).toBe('Desconocido');
+      expect(getScanStatus(undefined).cls).toBe('unk');
+    });
+
+    it('el mapa cubre los 3 tipos y los estados especiales', () => {
+      expect(Object.keys(SCAN_STATUS_LABELS)).toEqual(
+        expect.arrayContaining([
+          'special_needs', 'administration', 'first_aid', 'unknown', 'error',
+        ])
+      );
+    });
   });
 
   describe('detectPlateType', () => {

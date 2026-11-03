@@ -1,4 +1,4 @@
-import { getOrt, ORT_EXECUTION_PROVIDERS } from './vendor/ort-setup.js';
+import { getOrt, createSession, ORT_EXECUTION_PROVIDERS } from './vendor/ort-setup.js';
 
 export class PlateDetector {
   constructor(options = {}) {
@@ -25,6 +25,7 @@ export class PlateDetector {
 
     this._yoloCounter = 0;
     this._yoloSkip = 2;
+    this._lastInferMs = 0;
     this._lastGoodBox = null;
     this._goodBoxAge = 0;
     this._lastFallback = false;
@@ -48,9 +49,12 @@ export class PlateDetector {
   async loadModel(modelPath) {
     try {
       this.ort = await getOrt();
-      this.session = await this.ort.InferenceSession.create(modelPath, {
+      this.session = await createSession(modelPath, {
         executionProviders: ORT_EXECUTION_PROVIDERS,
       });
+      // createSession puede haber caído al runtime single-thread: los
+      // Tensor hay que crearlos con la misma instancia que la sesión.
+      this.ort = await getOrt();
       this.mock = false;
     } catch (e) {
       console.warn('[Detector] ONNX load failed:', e.message);
@@ -76,7 +80,14 @@ export class PlateDetector {
     }
 
     const input = this._preprocess(video);
+    const t0 = performance.now();
     const results = await this.session.run({ [this.session.inputNames[0]]: input });
+    this._lastInferMs = performance.now() - t0;
+
+    // En equipos lentos la inferencia puede tardar más que un frame: se
+    // detectan menos veces por segundo (reusando el último recuadro) para
+    // que la interfaz siga respondiendo en vez de congelarse.
+    if (this._lastInferMs > 800 && this._yoloSkip < 6) this._yoloSkip++;
     const output = results[this.session.outputNames[0]];
 
     const rawBoxes = this._decodeAll(output.data, output.dims);
