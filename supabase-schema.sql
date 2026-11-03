@@ -54,12 +54,12 @@ create policy "Admins can view all users"
   using (exists (select 1 from public.users where id = auth.uid() and role = 'admin'));
 
 -- ============================================================
--- TABLA: plates (patentes registradas y denunciadas)
+-- TABLA: plates (patentes especiales: necesidades especiales, administración, primeros auxilios)
 -- ============================================================
 create table public.plates (
   id uuid primary key default uuid_generate_v4(),
   plate text not null unique,
-  type text not null check (type in ('registered', 'stolen', 'wanted', 'suspicious')),
+  type text not null check (type in ('special_needs', 'administration', 'first_aid')),
   vehicle_type text check (vehicle_type in ('auto', 'camioneta', 'moto', 'camion', 'utilitario', 'otro')),
   owner_name text,
   owner_phone text,
@@ -108,7 +108,7 @@ create table public.scan_history (
   id uuid primary key default uuid_generate_v4(),
   user_id uuid references public.users(id) on delete set null,
   plate text not null,
-  status text not null check (status in ('registered', 'stolen', 'unknown', 'error')),
+  status text not null check (status in ('special_needs', 'administration', 'first_aid', 'unknown', 'error')),
   confidence real,
   latitude real,
   longitude real,
@@ -212,9 +212,12 @@ create or replace function public.increment_scan_stat(
   p_status text
 ) returns void language plpgsql security definer as $$
 declare
-  v_reg_inc integer := case when p_status = 'registered' then 1 else 0 end;
-  v_sto_inc integer := case when p_status = 'stolen' then 1 else 0 end;
-  v_unk_inc integer := case when p_status = 'unknown' then 1 else 0 end;
+  -- Espejo de countScan() en app-supabase.js:
+  -- administration -> registered_count, first_aid -> stolen_count,
+  -- el resto (special_needs, unknown, error) -> unknown_count
+  v_reg_inc integer := case when p_status = 'administration' then 1 else 0 end;
+  v_sto_inc integer := case when p_status = 'first_aid' then 1 else 0 end;
+  v_unk_inc integer := case when p_status not in ('administration', 'first_aid') then 1 else 0 end;
 begin
   insert into public.scan_stats (user_id, total_scans, registered_count, stolen_count, unknown_count, last_scan_at)
   values (p_user_id, 1, v_reg_inc, v_sto_inc, v_unk_inc, now())
@@ -269,17 +272,18 @@ create policy "Users can view own scan images"
 -- DATOS INICIALES (seed) - Patentes de ejemplo
 -- ============================================================
 insert into public.plates (plate, type, vehicle_type, owner_name, description) values
-  ('ABC123', 'registered', 'auto', 'Juan Pérez', 'Vehículo particular'),
-  ('DEF456', 'registered', 'camioneta', 'María García', 'Empresa XYZ'),
-  ('GHI789', 'registered', 'moto', 'Carlos López', 'Reparto'),
-  ('JKL012', 'registered', 'auto', 'Ana Martínez', 'Particular'),
-  ('MNO345', 'registered', 'utilitario', 'Pedro Sánchez', 'Servicio técnico'),
-  ('PQR678', 'registered', 'camion', 'Laura Fernández', 'Transporte'),
-  ('STU901', 'registered', 'auto', 'Diego Ruiz', 'Particular'),
-  ('BBBB10', 'registered', 'camioneta', 'Sofía Torres', 'Empresa ABC'),
-  ('XYZ789', 'stolen', 'auto', null, 'Robado 15/03/2024 - Denuncia #12345'),
-  ('LMN456', 'stolen', 'moto', null, 'Hurto 22/01/2024 - Denuncia #12346'),
-  ('WVU321', 'stolen', 'camioneta', null, 'Secuestro 10/02/2024 - Denuncia #12347')
+  ('ABC123', 'administration', 'auto', 'Juan Pérez', 'Vehículo de administración'),
+  ('DEF456', 'administration', 'camioneta', 'María García', 'Empresa XYZ'),
+  ('GHI789', 'administration', 'moto', 'Carlos López', 'Reparto'),
+  ('JKL012', 'administration', 'auto', 'Ana Martínez', 'Personal administrativo'),
+  ('MNO345', 'administration', 'utilitario', 'Pedro Sánchez', 'Servicio técnico'),
+  ('PQR678', 'administration', 'camion', 'Laura Fernández', 'Transporte'),
+  ('STU901', 'administration', 'auto', 'Diego Ruiz', 'Personal administrativo'),
+  ('BBBB10', 'administration', 'camioneta', 'Sofía Torres', 'Empresa ABC'),
+  ('XYZ789', 'first_aid', 'auto', null, 'Ambulancia - Cruz Roja'),
+  ('LMN456', 'first_aid', 'moto', null, 'Moto de emergencias médicas'),
+  ('WVU321', 'first_aid', 'camioneta', null, 'Unidad de primeros auxilios'),
+  ('PMR001', 'special_needs', 'auto', null, 'Vehículo de movilidad reducida')
 on conflict (plate) do nothing;
 
 -- ============================================================
@@ -308,8 +312,9 @@ create trigger trigger_create_default_contacts
 create view public.stats_dashboard as
 select
   (select count(*) from public.users) as total_users,
-  (select count(*) from public.plates where type = 'registered' and is_active) as total_registered,
-  (select count(*) from public.plates where type = 'stolen' and is_active) as total_stolen,
+  (select count(*) from public.plates where type = 'administration' and is_active) as total_registered,
+  (select count(*) from public.plates where type = 'first_aid' and is_active) as total_stolen,
+  (select count(*) from public.plates where type = 'special_needs' and is_active) as total_special_needs,
   (select count(*) from public.scan_history) as total_scans,
   (select count(*) from public.scan_history where created_at > now() - interval '24 hours') as scans_24h,
   (select count(*) from public.scan_history where created_at > now() - interval '7 days') as scans_7d;

@@ -369,17 +369,17 @@ export function getUserId() {
 
 // Exportar tipos para TypeScript (opcional)
 export const PlateType = {
-  REGISTERED: 'registered',
-  STOLEN: 'stolen',
-  WANTED: 'wanted',
-  SUSPICIOUS: 'suspicious'
+  SPECIAL_NEEDS: 'special_needs',
+  ADMINISTRATION: 'administration',
+  FIRST_AID: 'first_aid',
 };
 
 export const ScanStatus = {
-  REGISTERED: 'registered',
-  STOLEN: 'stolen',
+  SPECIAL_NEEDS: 'special_needs',
+  ADMINISTRATION: 'administration',
+  FIRST_AID: 'first_aid',
   UNKNOWN: 'unknown',
-  ERROR: 'error'
+  ERROR: 'error',
 };
 
 export const ContactType = {

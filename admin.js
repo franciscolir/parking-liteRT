@@ -345,8 +345,9 @@ export class AdminDashboard {
             <button class="btn-primary btn-small" id="admin-add-plate">+ Agregar patente</button>
             <select id="admin-plate-filter" class="admin-select">
               <option value="">Todas</option>
-              <option value="registered">Registradas</option>
-              <option value="stolen">Denunciadas</option>
+              <option value="special_needs">Necesidades especiales</option>
+              <option value="administration">Administración</option>
+              <option value="first_aid">Primeros auxilios</option>
             </select>
           </div>
           <div id="admin-plates-list" class="admin-list"></div>
@@ -410,8 +411,9 @@ export class AdminDashboard {
         <div class="admin-toolbar">
           <select id="admin-scan-filter" class="admin-select">
             <option value="">Todos</option>
-            <option value="registered">Registrados</option>
-            <option value="stolen">Denunciados</option>
+            <option value="special_needs">Necesidades especiales</option>
+            <option value="administration">Administración</option>
+            <option value="first_aid">Primeros auxilios</option>
             <option value="unknown">Desconocidos</option>
           </select>
           <button class="btn-secondary btn-small" id="admin-refresh-scans">🔄 Actualizar</button>
@@ -755,7 +757,7 @@ export class AdminDashboard {
       title.textContent = 'Agregar patente';
       inputPlate.value = '';
       delete inputPlate.dataset.plateId;
-      inputType.value = 'registered';
+      inputType.value = PLATE_TYPES[0].value;
       inputOwner.value = '';
       inputVehicle.value = '';
     }

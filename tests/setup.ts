@@ -179,8 +179,8 @@ vi.mock('./supabase-client.js', () => ({
   subscribeToContacts: vi.fn(),
   isAuthenticated: vi.fn(),
   getUserId: vi.fn(),
-  PlateType: { REGISTERED: 'registered', STOLEN: 'stolen', WANTED: 'wanted', SUSPICIOUS: 'suspicious' },
-  ScanStatus: { REGISTERED: 'registered', STOLEN: 'stolen', UNKNOWN: 'unknown', ERROR: 'error' },
+  PlateType: { SPECIAL_NEEDS: 'special_needs', ADMINISTRATION: 'administration', FIRST_AID: 'first_aid' },
+  ScanStatus: { SPECIAL_NEEDS: 'special_needs', ADMINISTRATION: 'administration', FIRST_AID: 'first_aid', UNKNOWN: 'unknown', ERROR: 'error' },
   ContactType: { POLICE: 'police', FIRE: 'fire', EMERGENCY: 'emergency', OFFICE: 'office', CUSTOM: 'custom' },
 }));
 
