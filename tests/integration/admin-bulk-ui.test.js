@@ -133,6 +133,27 @@ describe('Admin - Ingreso masivo por texto (UI)', () => {
     expect(dashboard.bulkSession.rows[0].plateStatus).toBe('ok');
   });
 
+  it('la píldora de limpieza elimina también las que ya existen en la base', async () => {
+    // ABCD12 ya está en la base de datos
+    platesDb.push({ plate: 'ABCD12', type: 'first_aid', is_active: true });
+
+    const dashboard = montarAdmin();
+    document.getElementById('bulk-text').value = 'ABCD12 ambulancia\nBCDF34 administración';
+    await dashboard.analyzeBulkText();
+
+    expect(document.querySelectorAll('#bulk-table-body tr')).toHaveLength(2);
+
+    const pill = document.getElementById('bulk-dedup');
+    expect(pill).toBeTruthy();
+    expect(pill.textContent).toContain('ya existe');
+
+    pill.click();
+
+    // La que ya existe desaparece de la lista; queda solo la nueva
+    expect(document.querySelectorAll('#bulk-table-body tr')).toHaveLength(1);
+    expect(dashboard.bulkSession.rows[0].plate).toBe('BCDF34');
+  });
+
   it('el tab Usuarios alterna entre registrados y flotantes con las sub-tabs', () => {
     montarAdmin();
 

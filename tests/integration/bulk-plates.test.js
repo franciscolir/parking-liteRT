@@ -149,8 +149,10 @@ describe('bulk-plates.js', () => {
       expect(session.rows).toHaveLength(3);
       expect(session.rows.every(r => r.plateStatus === 'duplicate')).toBe(true);
 
-      const removed = session.removeDuplicates();
+      const { removed, duplicates, existing } = session.removeDuplicates();
       expect(removed).toBe(2);
+      expect(duplicates).toBe(2);
+      expect(existing).toBe(0);
       expect(session.rows).toHaveLength(1);
       // La sobreviviente ya no está marcada como duplicada
       expect(session.rows[0].plateStatus).toBe('ok');
@@ -160,8 +162,22 @@ describe('bulk-plates.js', () => {
     it('removeDuplicates no toca las filas sin duplicados', () => {
       const session = new BulkPlateSession();
       session.analyze('ABCD12\nBCDF34', []);
-      expect(session.removeDuplicates()).toBe(0);
+      expect(session.removeDuplicates().removed).toBe(0);
       expect(session.rows).toHaveLength(2);
+    });
+
+    it('removeDuplicates también elimina las que ya existen en la base', () => {
+      const session = new BulkPlateSession();
+      session.analyze('ABCD12 ... BCDF34 ... ABCD12', [{ plate: 'BCDF34', type: 'administration' }]);
+
+      const { removed, duplicates, existing } = session.removeDuplicates();
+      expect(removed).toBe(2);
+      expect(duplicates).toBe(1);
+      expect(existing).toBe(1);
+      // Solo queda la patente nueva: la lista queda limpia para guardar
+      expect(session.rows).toHaveLength(1);
+      expect(session.rows[0].plate).toBe('ABCD12');
+      expect(session.validate().toSave).toHaveLength(1);
     });
   });
 

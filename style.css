@@ -116,8 +116,18 @@ html, body {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
-  position: relative;
+  /* NO cambiar a position: relative: la vista debe seguir siendo absolute
+     (top:52px / bottom:nav) para ocupar exactamente el espacio visible
+     entre el header fijo y la nav. Con relative quedaba 52px del final
+     fuera del viewport (clip por #app{overflow:hidden}) y el último botón
+     de cada lista quedaba inalcanzable. */
   z-index: 1;
+}
+
+/* Clase utilitaria: ocultar elementos (la usaban #bulk-results y #bulk-errors
+   sin regla propia, así que la tabla vacía se veía antes de analizar). */
+.hidden {
+  display: none;
 }
 #view-home {
   padding-top: 8px;
@@ -1763,13 +1773,27 @@ body.is-guest-login #install-banner {
   border-color: var(--primary);
 }
 
+/* Con resultados en pantalla el área de texto se compacta (se oculta la
+   ayuda y el textarea encoge) para que el resumen y el botón "Guardar"
+   queden visibles sin scrollear. */
+.bulk-results-visible .bulk-hint {
+  display: none;
+}
+
+.bulk-results-visible .bulk-textarea {
+  min-height: 84px;
+}
+
 .bulk-input-actions,
 .bulk-table-actions {
   display: flex;
   gap: 8px;
   align-items: center;
-  margin-top: 10px;
   flex-wrap: wrap;
+}
+
+.bulk-input-actions {
+  margin-top: 10px;
 }
 
 /* Los .btn-primary/.btn-secondary globales son de ancho completo */
@@ -1779,12 +1803,16 @@ body.is-guest-login #install-banner {
   margin: 0;
 }
 
-.bulk-table-actions .btn-primary {
-  margin-left: auto;
-}
-
 .bulk-table-actions {
-  margin: 12px 16px 20px;
+  /* Barra fija al final de la lista: el botón "Guardar patentes" queda
+     siempre visible sin tener que scrollear hasta el final. */
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin: 12px 0 0;
+  padding: 10px 16px 12px;
+  background: var(--bg);
+  border-top: 1px solid rgba(255,255,255,.08);
 }
 
 .bulk-table-actions .btn-primary {
@@ -1793,6 +1821,34 @@ body.is-guest-login #install-banner {
 
 .bulk-results {
   margin-top: 4px;
+  /* Espacio bajo la barra de acciones para que pueda quedar "sticky"
+     (flotando) al final de la lista sin quedar tapada por la nav. */
+  padding-bottom: 64px;
+}
+
+/* Cabecera fija del editor masivo: resumen + botón Guardar siempre visibles. */
+.bulk-summary-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+
+.bulk-summary-wrap .bulk-summary {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.bulk-summary-wrap .btn-small {
+  width: auto;
+  margin: 0;
+  flex-shrink: 0;
 }
 
 .bulk-summary {

@@ -379,7 +379,10 @@ export class AdminDashboard {
           </div>
 
           <div class="bulk-results hidden" id="bulk-results">
-            <div class="bulk-summary" id="bulk-summary"></div>
+            <div class="bulk-summary-wrap">
+              <div class="bulk-summary" id="bulk-summary"></div>
+              <button class="btn-primary btn-small" id="bulk-save" disabled>💾 Guardar</button>
+            </div>
 
             <div class="bulk-table-wrap">
               <table class="bulk-table">
@@ -400,7 +403,6 @@ export class AdminDashboard {
 
             <div class="bulk-table-actions">
               <button class="btn-secondary btn-small" id="bulk-add-row">+ Agregar patente</button>
-              <button class="btn-primary btn-small" id="bulk-save" disabled>💾 Guardar patentes</button>
             </div>
           </div>
         </div>
@@ -883,6 +885,11 @@ export class AdminDashboard {
 
     if (results) results.classList.toggle('hidden', !session.analyzed);
 
+    // Con resultados en pantalla el área de texto se compacta: así el
+    // resumen y el botón "Guardar" quedan visibles sin tener que scrollear.
+    document.getElementById('admin-subtab-plates-bulk')
+      ?.classList.toggle('bulk-results-visible', session.analyzed);
+
     if (!session.rows.length) {
       body.innerHTML = `<tr><td colspan="5" class="bulk-empty">${
         session.analyzed ? 'No se encontraron patentes en el texto' : ''
@@ -990,16 +997,25 @@ export class AdminDashboard {
 
     if (summary.ready) chips.push(`<span class="bulk-chip ok">${summary.ready} lista${summary.ready === 1 ? '' : 's'} para guardar</span>`);
     if (summary.review) chips.push(`<span class="bulk-chip warn">${summary.review} requiere${summary.review === 1 ? '' : 'n'} revisión</span>`);
-    if (summary.duplicate) {
-      // Píldora clicable: al presionarla se ELIMINAN las duplicadas
-      // (queda una sola aparición de cada patente).
+
+    // Píldora clicable de limpieza: al presionarla se ELIMINAN las
+    // duplicadas Y las que ya existen en la base, dejando la lista limpia
+    // antes de guardar.
+    if (summary.duplicate || summary.existing) {
+      const detalle = [];
+      if (summary.duplicate) {
+        detalle.push(`${summary.duplicate} duplicada${summary.duplicate === 1 ? '' : 's'}`);
+      }
+      if (summary.existing) {
+        detalle.push(`${summary.existing} ya existe${summary.existing === 1 ? '' : 'n'}`);
+      }
       chips.push(
         `<button type="button" class="bulk-chip dup bulk-chip-btn" id="bulk-dedup" ` +
-        `title="Eliminar las patentes duplicadas (conserva la primera)">` +
-        `${summary.duplicate} duplicada${summary.duplicate === 1 ? '' : 's'} — clic para eliminar</button>`
+        `title="Eliminar las duplicadas y las que ya existen en la base (deja la lista limpia antes de guardar)">` +
+        `${detalle.join(' · ')} — clic para eliminar</button>`
       );
     }
-    if (summary.existing) chips.push(`<span class="bulk-chip dup">${summary.existing} ya existe${summary.existing === 1 ? '' : 'n'}</span>`);
+
     if (summary.invalid) chips.push(`<span class="bulk-chip err">${summary.invalid} inválida${summary.invalid === 1 ? '' : 's'}</span>`);
 
     el.innerHTML = `
@@ -1048,17 +1064,21 @@ export class AdminDashboard {
   }
 
   /**
-   * Elimina las patentes duplicadas del lote (píldora "N duplicadas"):
-   * conserva la primera aparición de cada patente y borra el resto.
+   * Limpia el lote (píldora "N duplicadas · M ya existen"):
+   * elimina las duplicadas (conserva la primera) y las que ya existen
+   * en la base de datos.
    */
   removeBulkDuplicates() {
-    const removed = this.bulkSession.removeDuplicates();
+    const { removed, duplicates, existing } = this.bulkSession.removeDuplicates();
     if (!removed) {
-      this.toast('No hay duplicadas para eliminar', 'error');
+      this.toast('No hay nada para limpiar', 'error');
       return;
     }
     this.renderBulkTable();
-    this.toast(`${removed} duplicada${removed === 1 ? '' : 's'} eliminada${removed === 1 ? '' : 's'}`, 'success');
+    const detalle = [];
+    if (duplicates) detalle.push(`${duplicates} duplicada${duplicates === 1 ? '' : 's'}`);
+    if (existing) detalle.push(`${existing} ya existente${existing === 1 ? '' : 's'}`);
+    this.toast(`${detalle.join(' y ')} eliminada${removed === 1 ? '' : 's'}`, 'success');
   }
 
   /** Extrae la patente mencionada en un error de la base de datos. */

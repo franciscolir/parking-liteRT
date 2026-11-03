@@ -179,24 +179,36 @@ export class BulkPlateSession {
   }
 
   /**
-   * Elimina las filas duplicadas: de cada grupo de repeticiones conserva
-   * la primera aparición y borra el resto. Es lo que hace la píldora
-   * "N duplicadas" del resumen.
-   * @returns {number} cantidad de filas eliminadas
+   * Limpia el lote: elimina las filas duplicadas (conservando la primera
+   * aparición) Y las que ya existen en la base de datos. Es lo que hace la
+   * píldora de limpieza del resumen, para dejar la lista lista para guardar.
+   * @returns {{removed:number, duplicates:number, existing:number}}
    */
   removeDuplicates() {
     const seen = new Set();
     const toRemove = [];
+    let duplicates = 0;
+    let existing = 0;
+
     for (const row of this.rows) {
+      // Ya está en la base: se elimina de la lista (no se puede guardar).
+      if (row.plateStatus === PLATE_STATUS.existing) {
+        toRemove.push(row.id);
+        existing++;
+        continue;
+      }
+
       if (row.plateStatus !== PLATE_STATUS.duplicate || !row.plate) continue;
       if (seen.has(row.plate)) {
         toRemove.push(row.id);
+        duplicates++;
       } else {
         seen.add(row.plate);
       }
     }
+
     for (const id of toRemove) this.removeRow(id);
-    return toRemove.length;
+    return { removed: toRemove.length, duplicates, existing };
   }
 
   /** Agrega una fila manual (el usuario la escribe a mano). */
