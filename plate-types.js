@@ -10,9 +10,9 @@
 
 /** Los 3 tipos de patente válidos, con su etiqueta y clase de color. */
 export const PLATE_TYPES = [
-  { value: 'special_needs', label: 'Necesidades especiales', cls: 'warn' },
-  { value: 'administration', label: 'Administración', cls: 'reg' },
-  { value: 'first_aid', label: 'Primeros auxilios', cls: 'stolen' },
+  { value: 'special_needs', label: 'Necesidades especiales', abbr: 'NE', cls: 'warn' },
+  { value: 'administration', label: 'Administración', abbr: 'AD', cls: 'reg' },
+  { value: 'first_aid', label: 'Primeros auxilios', abbr: 'PA', cls: 'stolen' },
 ];
 
 /** Solo los valores válidos: ['special_needs', 'administration', 'first_aid'] */

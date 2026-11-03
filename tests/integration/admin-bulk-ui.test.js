@@ -154,7 +154,7 @@ describe('Admin - Ingreso masivo por texto (UI)', () => {
     expect(dashboard.bulkSession.rows[0].plate).toBe('BCDF34');
   });
 
-  it('muestra las mini cards con el total de ingresadas y el total por tipo', async () => {
+  it('muestra las mini cards NE/AD/PA/TOT con el total y el total por tipo', async () => {
     platesDb.push({ plate: 'AAAA11', type: 'administration', is_active: true });
     platesDb.push({ plate: 'BBBB22', type: 'administration', is_active: true });
     platesDb.push({ plate: 'CCCC33', type: 'first_aid', is_active: true });
@@ -164,16 +164,16 @@ describe('Admin - Ingreso masivo por texto (UI)', () => {
     const dashboard = montarAdmin();
     await dashboard.loadPlateStats();
 
-    // El total cuenta solo las activas (3 de 4)
-    expect(document.getElementById('plates-total').textContent).toBe('4');
-
-    // 3 mini cards, una por tipo, en el orden de PLATE_TYPES
+    // 4 mini cards: NE, AD, PA y TOT
     const cards = document.querySelectorAll('#plates-mini-cards .mini-card');
-    expect(cards).toHaveLength(3);
-    const values = [...cards].map(c => c.querySelector('.mini-card-value').textContent);
-    expect(values).toEqual(['1', '2', '1']); // special_needs, administration, first_aid
+    expect(cards).toHaveLength(4);
+
     const labels = [...cards].map(c => c.querySelector('.mini-card-label').textContent);
-    expect(labels).toEqual(['Necesidades especiales', 'Administración', 'Primeros auxilios']);
+    expect(labels).toEqual(['NE', 'AD', 'PA', 'TOT']);
+
+    const values = [...cards].map(c => c.querySelector('.mini-card-value').textContent);
+    // El total cuenta solo las activas (4 de 5)
+    expect(values).toEqual(['1', '2', '1', '4']);
   });
 
   it('el tab Usuarios alterna entre registrados y flotantes con las sub-tabs', () => {

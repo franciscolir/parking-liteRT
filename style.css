@@ -2240,48 +2240,27 @@ body.is-guest-login #install-banner { display: none !important; }
 .admin-subtab-content { display: none; }
 .admin-subtab-content.active { display: block; }
 
-/* Mini tarjetas de la vista de patentes: total de ingresadas + total por tipo */
+/* Mini tarjetas de la vista de patentes: NE / AD / PA / TOT */
 .mini-stats {
-  margin: 12px 16px 14px;
-}
-
-.mini-stats-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.mini-stats-title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .5px;
-  color: var(--text-muted);
-}
-
-.mini-stats-total {
-  font-size: 20px;
-  font-weight: 800;
-  line-height: 1;
-  color: var(--primary);
+  margin: 10px 16px 12px;
 }
 
 .mini-cards {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
 }
 
 .mini-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 10px 6px;
+  justify-content: center;
+  gap: 1px;
+  padding: 7px 2px;
   background: var(--card);
   border: 1px solid rgba(255,255,255,.08);
-  border-radius: var(--radius);
+  border-radius: 10px;
   cursor: pointer;
   font-family: inherit;
   color: var(--text);
@@ -2293,16 +2272,15 @@ body.is-guest-login #install-banner { display: none !important; }
 }
 
 .mini-card-value {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 800;
   line-height: 1.1;
 }
 
 .mini-card-label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: .3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .5px;
   text-align: center;
   color: var(--text-muted);
 }
@@ -2310,6 +2288,8 @@ body.is-guest-login #install-banner { display: none !important; }
 .mini-card.mini-reg .mini-card-value { color: var(--success); }
 .mini-card.mini-stolen .mini-card-value { color: var(--danger); }
 .mini-card.mini-warn .mini-card-value { color: var(--warning); }
+.mini-card.mini-tot .mini-card-value { color: var(--primary); }
+.mini-card.mini-tot .mini-card-label { color: var(--primary); }
 
 .mini-card.active {
   border-color: var(--primary);

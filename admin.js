@@ -338,12 +338,8 @@ export class AdminDashboard {
 
         <!-- Sub-vista: ingreso individual -->
         <div class="admin-subtab-content active" id="admin-subtab-plates-individual">
-          <!-- Mini cards: total de ingresadas + total por tipo -->
+          <!-- Mini cards: NE / AD / PA / TOT -->
           <div class="mini-stats">
-            <div class="mini-stats-head">
-              <span class="mini-stats-title">Total de ingresadas</span>
-              <span class="mini-stats-total" id="plates-total">—</span>
-            </div>
             <div class="mini-cards" id="plates-mini-cards"></div>
           </div>
 
@@ -719,12 +715,12 @@ export class AdminDashboard {
   }
 
   /**
-   * Mini tarjetas de la vista de patentes: total de ingresadas y total por
-   * tipo (uno por cada tipo de PLATE_TYPES). Al hacer clic filtran la lista.
+   * Mini tarjetas de la vista de patentes: NE / AD / PA / TOT.
+   * TOT es el total de ingresadas (activas). Al tocar una card se filtra
+   * la lista por ese tipo; TOT quita el filtro.
    */
   async loadPlateStats() {
     const box = document.getElementById('plates-mini-cards');
-    const totalEl = document.getElementById('plates-total');
     if (!box) return;
 
     const { data, error } = await supabase
@@ -746,19 +742,24 @@ export class AdminDashboard {
       counts[p.type]++;
     }
 
-    if (totalEl) {
-      totalEl.textContent = active.length;
-      const inactive = rows.length - active.length;
-      totalEl.title = inactive ? `${inactive} inactiva(s) no se cuentan` : 'Patentes activas';
-    }
+    const inactive = rows.length - active.length;
 
     box.innerHTML = PLATE_TYPES.map(t => `
       <button type="button" class="mini-card mini-${t.cls}" data-type="${t.value}"
-              title="Filtrar por ${t.label}">
+              title="${t.label}: ${counts[t.value] || 0}">
         <span class="mini-card-value">${counts[t.value] || 0}</span>
-        <span class="mini-card-label">${t.label}</span>
+        <span class="mini-card-label">${t.abbr}</span>
       </button>
-    `).join('');
+    `).join('') + `
+      <button type="button" class="mini-card mini-tot" data-type=""
+              title="Total de ingresadas: ${active.length}${inactive ? ` (${inactive} inactivas no se cuentan)` : ''}">
+        <span class="mini-card-value">${active.length}</span>
+        <span class="mini-card-label">TOT</span>
+      </button>
+    `;
+
+    // Re-renderizar las cards borra el resaltado: se vuelve a aplicar
+    this.syncMiniCards(document.getElementById('admin-plate-filter')?.value || '');
   }
 
   /** Marca la mini card del tipo que está filtrando la lista. */
@@ -766,7 +767,7 @@ export class AdminDashboard {
     const box = document.getElementById('plates-mini-cards');
     if (!box) return;
     box.querySelectorAll('.mini-card').forEach(c =>
-      c.classList.toggle('active', !!typeFilter && c.dataset.type === typeFilter)
+      c.classList.toggle('active', typeFilter ? c.dataset.type === typeFilter : c.dataset.type === '')
     );
   }
 
