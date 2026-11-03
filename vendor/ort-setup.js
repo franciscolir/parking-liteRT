@@ -17,6 +17,10 @@
 // origen: pesa poco, queda en el precache del Service Worker (offline y
 // sin CORS) y no depende del CDN.
 //
+// Excepción: en modo multi-hilo el glue se pide a jsDelivr, porque ORT crea
+// los Workers de pthread a partir de la URL del glue y el Service Worker
+// bloquea los workers same-origin (ver resolveWasmPaths).
+//
 // El .wasm grande NO se commitea: se baja de jsDelivr, que lo sirve con
 // `Cache-Control: public, max-age=31536000, immutable` (GitHub Pages
 // solo da max-age=600).
@@ -44,14 +48,18 @@ export const HAS_WEBGPU = forced === 'wasm'
 // origen. Con el Service Worker activo, esas peticiones se responden desde
 // la caché y el navegador las BLOQUEA (net::ERR_BLOCKED_BY_RESPONSE): el
 // WASM queda esperando a un worker que nunca arranca y la carga de los
-// modelos se cuelga para siempre ("Cargando detector YOLOv8..." eternity).
+// modelos se cuelga para siempre ("Cargando detector YOLOv8...").
 //
 // Con 1 hilo no hace falta ningún Worker: el WASM se instancia en el hilo
-// principal y los modelos cargan siempre. La inferencia es ~2x más lenta,
-// pero funciona en todos los dispositivos.
+// principal y los modelos cargan siempre.
 //
-// Se puede forzar el número de hilos con ?threads=4 (o ?threads=1) para
-// probar el modo multi-hilo.
+// Con >1 hilos el problema se esquiva usando el glue de jsDelivr: ORT lo
+// baja a un blob: y los Workers de pthread nacen de blob:, que el Service
+// Worker no intercepta (ver resolveWasmPaths). Se activa con ?threads=4.
+//
+// En escritorio (WebGPU) el multi-hilo NO aporta: medido en producción,
+// 1 hilo = 229-310 ms por inferencia y 4 hilos = 237-366 ms. Por eso el
+// default es 1: más simple, menos memoria y siempre funciona.
 export const DEFAULT_THREADS = 1;
 
 const forcedThreads = Number(
@@ -61,6 +69,28 @@ const forcedThreads = Number(
 /** Resuelve cuántos hilos debe usar el WASM. */
 export function resolveNumThreads({ forced: forcedValue = forcedThreads, fallback = DEFAULT_THREADS } = {}) {
   return Number.isFinite(forcedValue) && forcedValue > 0 ? Math.floor(forcedValue) : fallback;
+}
+
+/**
+ * Rutas del glue (.mjs) y del WASM.
+ *
+ * - 1 hilo  → glue desde nuestro origen (offline, precache del SW).
+ * - >1 hilos → glue desde jsDelivr: ORT lo convierte en un blob: y los
+ *   Workers de pthread se crean desde ahí. Con el glue same-origin el
+ *   Service Worker intercepta la petición del worker y el navegador la
+ *   bloquea (ERR_BLOCKED_BY_RESPONSE) → el WASM queda colgado.
+ */
+export function resolveWasmPaths(numThreads, {
+  webgpu = HAS_WEBGPU,
+  cdn = ORT_WASM_CDN,
+  localDir = new URL('./', import.meta.url).href,
+} = {}) {
+  const glue = webgpu ? 'ort-wasm-simd-threaded.jsep.mjs' : 'ort-wasm-simd-threaded.mjs';
+  const wasm = webgpu ? 'ort-wasm-simd-threaded.jsep.wasm' : 'ort-wasm-simd-threaded.wasm';
+  return {
+    mjs: numThreads > 1 ? cdn + glue : localDir + glue,
+    wasm: cdn + wasm,
+  };
 }
 
 // EPs que se le pasan a InferenceSession.create. El build sin WebGPU no
@@ -89,29 +119,14 @@ async function loadOrt() {
   // desde jsDelivr. ORT concatena el nombre con el prefijo cuando el
   // wasmPaths es un string; con el formato {mjs, wasm} hay que pasar la
   // URL completa del .wasm.
-  const glue = HAS_WEBGPU
-    ? 'ort-wasm-simd-threaded.jsep.mjs'
-    : 'ort-wasm-simd-threaded.mjs';
-  const wasm = HAS_WEBGPU
-    ? 'ort-wasm-simd-threaded.jsep.wasm'
-    : 'ort-wasm-simd-threaded.wasm';
-
-  ort.env.wasm.wasmPaths = {
-    mjs: new URL('./' + glue, import.meta.url).href,
-    wasm: ORT_WASM_CDN + wasm,
-  };
-
-  // ORT calcula los hilos por defecto así:
-  //   si el documento NO está cross-origin isolated → 1 hilo (single-thread)
-  //   si está isolated → min(4, ceil(cores/2))
-  // Por eso los headers COOP/COEP que agrega el Service Worker son clave.
   //
-  // PERO: los hilos de ORT arrancan Workers de pthread que el Service
-  // Worker no puede servir (se bloquean con ERR_BLOCKED_BY_RESPONSE) y el
-  // WASM queda colgado. Por eso se fuerzan los hilos explícitamente
-  // (1 por defecto) en vez de dejar que ORT los elija.
+  // Los hilos se fuerzan explícitamente (1 por defecto): si se deja que ORT
+  // los elija, con el documento cross-origin isolated usa varios y el
+  // Service Worker bloquea los Workers de pthread (ERR_BLOCKED_BY_RESPONSE)
+  // → la carga de los modelos se queda colgada para siempre.
   const threads = resolveNumThreads();
   ort.env.wasm.numThreads = threads;
+  ort.env.wasm.wasmPaths = resolveWasmPaths(threads);
 
   const isolated = typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : false;
 
