@@ -211,6 +211,7 @@ export class AdminDashboard {
     // 5. Cargar el resto en background
     this.loadUsers();
     this.loadPlates();
+    this.loadPlateStats();
     this.loadScans();
     this.loadWhitelist();
     this.loadTimeoutConfig();
@@ -337,6 +338,15 @@ export class AdminDashboard {
 
         <!-- Sub-vista: ingreso individual -->
         <div class="admin-subtab-content active" id="admin-subtab-plates-individual">
+          <!-- Mini cards: total de ingresadas + total por tipo -->
+          <div class="mini-stats">
+            <div class="mini-stats-head">
+              <span class="mini-stats-title">Total de ingresadas</span>
+              <span class="mini-stats-total" id="plates-total">—</span>
+            </div>
+            <div class="mini-cards" id="plates-mini-cards"></div>
+          </div>
+
           <div class="search-box">
             <svg class="search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="m21 21-4.3-4.3" stroke="currentColor" stroke-width="2"/></svg>
             <input type="text" id="admin-plate-search" placeholder="Buscar patente..." autocomplete="off">
@@ -705,6 +715,59 @@ export class AdminDashboard {
 
     this.platesCache = data || [];
     this.renderPlates(this.platesCache);
+    this.syncMiniCards(typeFilter);
+  }
+
+  /**
+   * Mini tarjetas de la vista de patentes: total de ingresadas y total por
+   * tipo (uno por cada tipo de PLATE_TYPES). Al hacer clic filtran la lista.
+   */
+  async loadPlateStats() {
+    const box = document.getElementById('plates-mini-cards');
+    const totalEl = document.getElementById('plates-total');
+    if (!box) return;
+
+    const { data, error } = await supabase
+      .from('plates')
+      .select('type,is_active');
+
+    if (error) {
+      console.warn('[Admin] Error cargando el resumen de patentes:', error);
+      return;
+    }
+
+    const rows = data || [];
+    const active = rows.filter(p => p.is_active !== false);
+
+    const counts = {};
+    for (const t of PLATE_TYPES) counts[t.value] = 0;
+    for (const p of active) {
+      if (counts[p.type] === undefined) counts[p.type] = 0;
+      counts[p.type]++;
+    }
+
+    if (totalEl) {
+      totalEl.textContent = active.length;
+      const inactive = rows.length - active.length;
+      totalEl.title = inactive ? `${inactive} inactiva(s) no se cuentan` : 'Patentes activas';
+    }
+
+    box.innerHTML = PLATE_TYPES.map(t => `
+      <button type="button" class="mini-card mini-${t.cls}" data-type="${t.value}"
+              title="Filtrar por ${t.label}">
+        <span class="mini-card-value">${counts[t.value] || 0}</span>
+        <span class="mini-card-label">${t.label}</span>
+      </button>
+    `).join('');
+  }
+
+  /** Marca la mini card del tipo que está filtrando la lista. */
+  syncMiniCards(typeFilter = '') {
+    const box = document.getElementById('plates-mini-cards');
+    if (!box) return;
+    box.querySelectorAll('.mini-card').forEach(c =>
+      c.classList.toggle('active', !!typeFilter && c.dataset.type === typeFilter)
+    );
   }
 
   renderPlates(plates) {
@@ -802,6 +865,7 @@ export class AdminDashboard {
       document.getElementById('admin-plate-search')?.value || '',
       document.getElementById('admin-plate-filter')?.value || ''
     );
+    await this.loadPlateStats();
     await this.loadStats();
   }
 
@@ -823,6 +887,7 @@ export class AdminDashboard {
       document.getElementById('admin-plate-search')?.value || '',
       document.getElementById('admin-plate-filter')?.value || ''
     );
+    await this.loadPlateStats();
     await this.loadStats();
   }
 
@@ -1150,6 +1215,7 @@ export class AdminDashboard {
       document.getElementById('admin-plate-search')?.value || '',
       document.getElementById('admin-plate-filter')?.value || ''
     );
+    await this.loadPlateStats();
     await this.loadStats();
   }
 
@@ -1191,6 +1257,7 @@ export class AdminDashboard {
       document.getElementById('admin-plate-search')?.value || '',
       document.getElementById('admin-plate-filter')?.value || ''
     );
+    await this.loadPlateStats();
     await this.loadStats();
   }
 
@@ -1292,6 +1359,7 @@ export class AdminDashboard {
           await this.loadTimeoutConfig();
         } else if (target === 'plates') {
           await this.loadPlates();
+          await this.loadPlateStats();
         } else if (target === 'scans') {
           await this.loadScans();
         }
@@ -1334,6 +1402,21 @@ export class AdminDashboard {
     if (plateFilter) {
       plateFilter.addEventListener('change', () => {
         this.loadPlates(plateSearch?.value || '', plateFilter.value);
+      });
+    }
+
+    // Mini cards: al tocarlas filtran la lista por ese tipo
+    const miniCards = document.getElementById('plates-mini-cards');
+    if (miniCards) {
+      miniCards.addEventListener('click', (e) => {
+        const card = e.target.closest('.mini-card');
+        if (!card) return;
+        const type = card.dataset.type;
+        const current = plateFilter?.value || '';
+        const next = current === type ? '' : type;
+        if (plateFilter) plateFilter.value = next;
+        this.syncMiniCards(next);
+        this.loadPlates(plateSearch?.value || '', next);
       });
     }
 
