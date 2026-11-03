@@ -82,6 +82,30 @@ const PRECACHE = [
   'models/ppocr_keys.json',
 ];
 
+/**
+ * Copia una respuesta para guardarla en la caché.
+ *
+ * El body que guarda la Cache API queda DESCOMPRIMIDO, pero la respuesta
+ * conserva las cabeceras `content-encoding: gzip` y `content-length` del
+ * origen. Servidas así, el navegador vuelve a intentar descomprimir y
+ * BLOQUEA la respuesta (net::ERR_BLOCKED_BY_RESPONSE) en los cargadores que
+ * leen bytes crudos (Workers de pthread, scripts): el WASM de ORT queda
+ * esperando un worker que nunca arranca y los modelos no cargan nunca.
+ *
+ * Además se clona la respuesta: compartir el stream con la que se devuelve
+ * al navegador la dejaba vacía.
+ */
+async function toCacheableResponse(res) {
+  const headers = new Headers(res.headers);
+  headers.delete('content-encoding');
+  headers.delete('content-length');
+  return new Response(await res.clone().blob(), {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  });
+}
+
 // ------------------------------------------------------------
 // Install: precache del shell (los modelos pesan ~16 MB, pero la
 // app ya los necesitaba en el primer arranque).
@@ -97,7 +121,7 @@ self.addEventListener('install', (event) => {
           try {
             const res = await fetch(new Request(url, { cache: 'reload' }));
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            await cache.put(url, res);
+            await cache.put(url, await toCacheableResponse(res));
           } catch (err) {
             failures.push(`${url}: ${err.message}`);
           }
@@ -184,9 +208,17 @@ function withIsolationHeaders(res) {
 async function putStamped(cache, request, res) {
   // Guardamos el momento de la cachada en una cabecera propia para poder
   // decidir frescura después (Date no siempre es legible en cross-origin).
+  // Se quitan content-encoding/content-length porque el body que se guarda
+  // ya viene descomprimido (ver toCacheableResponse).
   const headers = new Headers(res.headers);
+  headers.delete('content-encoding');
+  headers.delete('content-length');
   headers.set('x-sw-cached-at', String(Date.now()));
-  const copy = new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  const copy = new Response(await res.clone().blob(), {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  });
   await cache.put(request, copy);
 }
 

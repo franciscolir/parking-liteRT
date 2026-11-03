@@ -822,7 +822,17 @@ window.authWithApple = () => signInWithOAuth('apple');
 //     para que estén listos cuando el usuario abra la cámara.
 let modelsPromise = null;
 
+// Si la carga se cuelga (WASM esperando a un worker que no arranca, red
+// lenta, etc.) no podemos quedar para siempre en "Cargando detector...":
+// se corta y se avisa.
+const MODEL_LOAD_TIMEOUT_MS = 60000;
+
 const yieldToPaint = () => new Promise(r => setTimeout(r, 0));
+
+const withTimeout = (promise, ms, message) => Promise.race([
+  promise,
+  new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+]);
 
 const scheduleIdle = (fn) => {
   if (typeof window.requestIdleCallback === 'function') {
@@ -860,9 +870,30 @@ async function loadModels() {
   const ocrPromise = ocr.loadModel('models/ppocr_rec.onnx', 'models/ppocr_keys.json');
 
   setStatus('Cargando detector YOLOv8...');
-  const detBuf = await detPromise;
-  const detLoaded = await detector.loadModel(detBuf);
-  const ocrLoaded = await ocrPromise;
+
+  let detLoaded = false;
+  let ocrLoaded = false;
+  try {
+    const detBuf = await detPromise;
+    detLoaded = await withTimeout(
+      detector.loadModel(detBuf),
+      MODEL_LOAD_TIMEOUT_MS,
+      'El detector tardó demasiado en cargar'
+    );
+    ocrLoaded = await withTimeout(
+      ocrPromise,
+      MODEL_LOAD_TIMEOUT_MS,
+      'El OCR tardó demasiado en cargar'
+    );
+  } catch (e) {
+    console.warn('[Models] error al cargar:', e);
+    setStatus('No se pudieron cargar los modelos');
+    showToast('No se pudieron cargar los modelos. Recargá la página.', 'error');
+    // Se propaga para que initModels() libere modelsPromise y permita
+    // reintentar la carga más tarde.
+    throw e;
+  }
+
   await yieldToPaint();
 
   // El warmup compila el grafo para el tamaño real: es la parte más

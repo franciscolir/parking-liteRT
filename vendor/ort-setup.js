@@ -35,6 +35,34 @@ export const HAS_WEBGPU = forced === 'wasm'
     ? true
     : typeof navigator !== 'undefined' && !!navigator.gpu;
 
+// ------------------------------------------------------------
+// Hilos del WASM
+// ------------------------------------------------------------
+// 1 (single-thread) por defecto.
+//
+// ORT con varios hilos arranca Workers de pthread cargados desde el propio
+// origen. Con el Service Worker activo, esas peticiones se responden desde
+// la caché y el navegador las BLOQUEA (net::ERR_BLOCKED_BY_RESPONSE): el
+// WASM queda esperando a un worker que nunca arranca y la carga de los
+// modelos se cuelga para siempre ("Cargando detector YOLOv8..." eternity).
+//
+// Con 1 hilo no hace falta ningún Worker: el WASM se instancia en el hilo
+// principal y los modelos cargan siempre. La inferencia es ~2x más lenta,
+// pero funciona en todos los dispositivos.
+//
+// Se puede forzar el número de hilos con ?threads=4 (o ?threads=1) para
+// probar el modo multi-hilo.
+export const DEFAULT_THREADS = 1;
+
+const forcedThreads = Number(
+  (typeof location !== 'undefined' && new URLSearchParams(location.search).get('threads')) || 0
+) || 0;
+
+/** Resuelve cuántos hilos debe usar el WASM. */
+export function resolveNumThreads({ forced: forcedValue = forcedThreads, fallback = DEFAULT_THREADS } = {}) {
+  return Number.isFinite(forcedValue) && forcedValue > 0 ? Math.floor(forcedValue) : fallback;
+}
+
 // EPs que se le pasan a InferenceSession.create. El build sin WebGPU no
 // registra ese EP: pedirlo genera warnings en cada sesión.
 export const ORT_EXECUTION_PROVIDERS = HAS_WEBGPU ? ['webgpu', 'wasm'] : ['wasm'];
@@ -77,10 +105,15 @@ async function loadOrt() {
   //   si el documento NO está cross-origin isolated → 1 hilo (single-thread)
   //   si está isolated → min(4, ceil(cores/2))
   // Por eso los headers COOP/COEP que agrega el Service Worker son clave.
-  const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 1;
+  //
+  // PERO: los hilos de ORT arrancan Workers de pthread que el Service
+  // Worker no puede servir (se bloquean con ERR_BLOCKED_BY_RESPONSE) y el
+  // WASM queda colgado. Por eso se fuerzan los hilos explícitamente
+  // (1 por defecto) en vez de dejar que ORT los elija.
+  const threads = resolveNumThreads();
+  ort.env.wasm.numThreads = threads;
+
   const isolated = typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : false;
-  const threads = ort.env.wasm.numThreads
-    ?? (isolated ? Math.min(4, Math.ceil(cores / 2)) : 1);
 
   console.log(
     `[ORT] build ${HAS_WEBGPU ? 'webgpu' : 'wasm'} · threads=${threads} · isolated=${isolated}`
