@@ -159,6 +159,9 @@ async function initAuth() {
     // Cache local de patentes (lectura pública con anon key): permite
     // responder al instante en cámara y en el modo Manual.
     refreshPlatesCache().catch(() => {});
+    // Realtime de las patentes (tabla pública): los cambios llegan en
+    // segundos, también en modo invitado.
+    setupRealtimeSubscriptions();
     await navigate('home');
     return;
   }
@@ -243,9 +246,9 @@ async function loadUserData() {
 function setupRealtimeSubscriptions() {
   clearSubscriptions();
 
-  if (!currentUser) return;
-
-  // Patentes: además de refrescar la cache, se refrescan los resultados
+  // Patentes: la tabla es pública (RLS "Anyone can read active plates"),
+  // así que este canal sirve también para los invitados (modo usado en el
+  // estacionamiento). Además de refrescar la cache, refresca los resultados
   // del buscador manual (sin tocar lo que el usuario está escribiendo).
   const platesSub = subscribeToPlates(() => {
     refreshPlatesCache()
@@ -255,6 +258,10 @@ function setupRealtimeSubscriptions() {
       .catch((e) => console.warn('No se pudo refrescar la cache de patentes:', e));
   });
   subscriptions.push(platesSub);
+
+  // El historial y los contactos son del usuario de Supabase: sin sesión
+  // de admin no hay canal (el invitado usa el historial local del equipo).
+  if (!currentUser) return;
 
   // Historial
   const historySub = subscribeToScanHistory(currentUser.id, (payload) => {
@@ -680,6 +687,8 @@ async function renderGuestLogin() {
     loadLocalHistory();
     // Cache local de patentes (lectura pública con anon key).
     refreshPlatesCache().catch(() => {});
+    // Realtime de las patentes (tabla pública).
+    setupRealtimeSubscriptions();
     document.body.classList.remove('is-guest-login');
     updateAuthUI(false);
     await navigate('home');
