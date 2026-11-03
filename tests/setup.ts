@@ -164,6 +164,7 @@ vi.mock('./supabase-client.js', () => ({
   onAuthStateChange: vi.fn(),
   lookupPlate: vi.fn(),
   getPlates: vi.fn(),
+  searchPlates: vi.fn(),
   reportPlate: vi.fn(),
   saveScan: vi.fn(),
   getScanHistory: vi.fn(),

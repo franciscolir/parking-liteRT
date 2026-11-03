@@ -60,6 +60,7 @@ const PRECACHE = [
   'guest-auth.js',
   'ocr.js',
   'plate-parser.js',
+  'plate-search-view.js',
   'plate-types.js',
   'supabase-client.js',
   'supabase-config.js',

@@ -124,28 +124,57 @@
       <div style="height:16px"></div>
     </div>
 
-    <!-- =============== VIEW: CAMERA =============== -->
+    <!-- =============== VIEW: BUSCAR PATENTE (CÁMARA / MANUAL) =============== -->
     <div id="view-camera" class="view">
-      <div class="view-header"><h1>Lector de Patentes</h1><span class="badge" id="cam-status">En espera</span></div>
-      <div class="camera-container" id="cam-container">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="overlay-canvas" class="overlay-canvas"></canvas>
-        <div class="overlay">
-          <div class="scan-frame" id="scan-frame"></div>
-          <div class="scan-line"></div>
-          <div class="cam-hud">
-            <span class="hud-fps" id="hud-fps">FPS 0</span>
-            <span class="hud-gpu" id="hud-gpu">CPU</span>
+      <div class="view-header"><h1>Buscar patente</h1><span class="badge" id="cam-status">En espera</span></div>
+
+      <!-- Tabs de modo: Cámara / Manual (mismo sector, historial compartido) -->
+      <div class="view-tabs" role="tablist" aria-label="Modo de búsqueda">
+        <button type="button" class="view-tab active" data-mode="camera" role="tab" aria-selected="true">Cámara</button>
+        <button type="button" class="view-tab" data-mode="manual" role="tab" aria-selected="false">Manual</button>
+      </div>
+
+      <!-- ---------- MODO CÁMARA ---------- -->
+      <div class="view-panel" id="panel-camera">
+        <div class="camera-container" id="cam-container">
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="overlay-canvas" class="overlay-canvas"></canvas>
+          <div class="overlay">
+            <div class="scan-frame" id="scan-frame"></div>
+            <div class="scan-line"></div>
+            <div class="cam-hud">
+              <span class="hud-fps" id="hud-fps">FPS 0</span>
+              <span class="hud-gpu" id="hud-gpu">CPU</span>
+            </div>
           </div>
         </div>
+        <div class="camera-controls">
+          <label class="switch-container">
+            <input type="checkbox" id="scan-toggle">
+            <span class="switch-slider"></span>
+            <span class="switch-label" id="switch-label">Iniciar detección</span>
+          </label>
+        </div>
+      </div><!-- /panel-camera -->
+
+      <!-- ---------- MODO MANUAL ---------- -->
+      <div class="view-panel hidden" id="panel-manual">
+        <div class="manual-search">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <!-- readonly + inputmode=none: nunca se abre el teclado nativo,
+                 toda la escritura se hace con el teclado virtual de abajo. -->
+            <input type="text" id="manual-plate-input" placeholder="Escribí la patente..."
+                   readonly inputmode="none" autocomplete="off" autocapitalize="off" spellcheck="false">
+          </div>
+          <div class="manual-status" id="manual-status"></div>
+          <div class="manual-results" id="manual-results"></div>
+          <!-- Teclado virtual (se arma desde plate-search-view.js) -->
+          <div class="vkeyboard" id="manual-keyboard"></div>
+        </div>
       </div>
-      <div class="camera-controls">
-        <label class="switch-container">
-          <input type="checkbox" id="scan-toggle">
-          <span class="switch-slider"></span>
-          <span class="switch-label" id="switch-label">Iniciar detección</span>
-        </label>
-      </div>
+
+      <!-- ---------- COMPARTIDO POR AMBOS MODOS ---------- -->
       <div class="camera-result hidden" id="cam-result">
         <div class="result-card-inner">
           <div class="plate-icon" id="result-icon">&#128663;</div>
@@ -301,8 +330,8 @@
           <span>Inicio</span>
         </button>
         <button class="nav-item" data-view="camera">
-          <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          <span>Cámara</span>
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span>Buscar patente</span>
         </button>
         <button class="nav-item" data-view="register">
           <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>

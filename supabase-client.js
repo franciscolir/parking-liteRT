@@ -93,6 +93,34 @@ export async function getPlates({ type, search, limit = 100, offset = 0 } = {}) 
 }
 
 /**
+ * Búsqueda parcial de patentes (modo Manual de la vista unificada).
+ *
+ * Usa `ilike` para coincidencia parcial (ej. "AB" finds "AB123" and
+ * "XAB9"), ordena por patente y limita la cantidad de resultados.
+ * Solo lee patentes activas (RLS: "Anyone can read active plates"), con la
+ * anon key: no hace falta ser admin ni usuario.
+ *
+ * @param {{search?: string, limit?: number}} opts
+ * @returns {Promise<Array<{plate:string,type:string,vehicle_type?:string,owner_name?:string}>>}
+ */
+export async function searchPlates({ search, limit = 30 } = {}) {
+  // Solo letras, números y espacios: sin comodines de SQL ('%', '_').
+  const q = String(search || '').toUpperCase().replace(/[^A-Z0-9 ]/g, '').trim();
+  if (!q) return [];
+
+  const { data, error } = await supabase
+    .from('plates')
+    .select('plate,type,vehicle_type,owner_name,is_active')
+    .eq('is_active', true)
+    .ilike('plate', `%${q}%`)
+    .order('plate', { ascending: true })
+    .limit(limit);
+
+  if (error) throw error;
+  return data || [];
+}
+
+/**
  * Busca qué de las patentes indicadas ya existen en la base de datos.
  * Se usa en el ingreso masivo por texto para marcar "Ya existente".
  * Devuelve [{ plate, type, is_active }] solo con las que coinciden.

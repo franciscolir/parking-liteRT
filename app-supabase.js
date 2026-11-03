@@ -4,6 +4,7 @@ import { PlateDetector } from './detector.js';
 import { PlateOCR } from './ocr.js';
 import { validatePlate, normalizePlate } from './validator.js';
 import { TYPE_LABELS, getScanStatus } from './plate-types.js';
+import { PlateSearchView } from './plate-search-view.js';
 import { Corrector } from './corrector.js';
 import { AdminDashboard } from './admin.js';
 import {
@@ -52,6 +53,13 @@ let contacts = [];
 let platesCache = { special_needs: [], administration: [], first_aid: [] };
 let subscriptions = [];
 
+// Vista unificada Cámara / Manual ("Buscar patente")
+let plateSearch = null;          // PlateSearchView (modo manual)
+let searchMode = 'camera';        // 'camera' | 'manual'
+let resumeCameraOnSwitch = false; // si estaba escaneando al pasar a Manual
+let refreshPollTimer = null;      // respaldo de Realtime: polling 5 min
+let physicalKeyboardOn = false;   // teclado físico de la PC (modo Manual)
+
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 // ============================================================
@@ -59,6 +67,10 @@ const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 // ============================================================
 document.addEventListener('DOMContentLoaded', async function () {
   setupUIEvents();
+
+  // Respaldo de Realtime: refresco periódico (cada 5 min) de la cache de
+  // patentes, del historial y de los resultados del buscador manual.
+  startRefreshPolling();
 
   // Configurar callback de expiración de guest
   guestAuth.onExpired = () => {
@@ -142,6 +154,11 @@ async function initAuth() {
     guestSession = guest.session;
     appMode = 'guest';
     setupGuestHeartbeat();
+    // Historial del dispositivo (modo invitado).
+    loadLocalHistory();
+    // Cache local de patentes (lectura pública con anon key): permite
+    // responder al instante en cámara y en el modo Manual.
+    refreshPlatesCache().catch(() => {});
     await navigate('home');
     return;
   }
@@ -228,21 +245,26 @@ function setupRealtimeSubscriptions() {
 
   if (!currentUser) return;
 
-  // Patentes
-  const platesSub = subscribeToPlates(() => refreshPlatesCache());
+  // Patentes: además de refrescar la cache, se refrescan los resultados
+  // del buscador manual (sin tocar lo que el usuario está escribiendo).
+  const platesSub = subscribeToPlates(() => {
+    refreshPlatesCache()
+      .then(() => {
+        if (plateSearch && searchMode === 'manual') return plateSearch.refresh();
+      })
+      .catch((e) => console.warn('No se pudo refrescar la cache de patentes:', e));
+  });
   subscriptions.push(platesSub);
 
   // Historial
   const historySub = subscribeToScanHistory(currentUser.id, (payload) => {
     if (payload.eventType === 'INSERT') {
       const h = payload.new;
-      scanHistory.unshift({
+      pushScanHistory({
         plate: h.plate,
         status: h.status,
         time: new Date(h.created_at).getTime()
       });
-      if (scanHistory.length > 20) scanHistory.pop();
-      updateHistory();
     }
   });
   subscriptions.push(historySub);
@@ -287,6 +309,17 @@ function setupUIEvents() {
 
   // Cámara
   document.getElementById('scan-toggle').onchange = toggleScan;
+
+  // Vista unificada: tabs Cámara / Manual
+  document.querySelectorAll('.view-tab[data-mode]').forEach(tab => {
+    tab.onclick = () => switchSearchMode(tab.dataset.mode);
+  });
+
+  // Buscador manual (teclado virtual + búsqueda con debounce)
+  plateSearch = new PlateSearchView({
+    onSelect: (row) => selectManualPlate(row),
+  });
+  plateSearch.init(document);
 
   // Registro incidente
   document.getElementById('btn-send-whatsapp').onclick = sendWhatsAppReport;
@@ -391,7 +424,12 @@ window.navigate = async function (view) {
   const nEl = document.querySelector(`.nav-item[data-view="${view}"]`);
   if (nEl) nEl.classList.add('active');
 
-  if (view !== 'camera') stopCamera();
+  if (view !== 'camera') {
+    // Al salir de la vista se apaga la cámara y no se retoma sola.
+    resumeCameraOnSwitch = false;
+    setPhysicalKeyboard(false);
+    stopCamera();
+  }
 
   switch (view) {
     case 'home':
@@ -402,6 +440,9 @@ window.navigate = async function (view) {
       break;
     case 'camera':
       updateHistory();
+      // El historial es compartido entre Cámara y Manual: se recarga desde
+      // Supabase sin bloquear la apertura de la vista.
+      reloadScanHistory().catch(() => {});
       // initModels() es idempotente: si la carga ya está en curso (arranque
       // en segundo plano) se espera a esa misma promesa.
       await initModels().catch(() => {});
@@ -634,6 +675,11 @@ async function renderGuestLogin() {
 
     guestSession = result.session;
     appMode = 'guest';
+    // Sin usuario de Supabase no hay Realtime ni historial en la nube:
+    // el historial guardado en el dispositivo es la fuente.
+    loadLocalHistory();
+    // Cache local de patentes (lectura pública con anon key).
+    refreshPlatesCache().catch(() => {});
     document.body.classList.remove('is-guest-login');
     updateAuthUI(false);
     await navigate('home');
@@ -1045,6 +1091,141 @@ async function loop() {
 }
 
 // ============================================================
+// VISTA UNIFICADA: TABS CÁMARA / MANUAL
+// ============================================================
+// El sector central alterna entre la cámara y el buscador manual.
+// El cartel de resultado y el historial están FUERA de los paneles: se
+// comparten entre los dos modos (una patente buscada a mano aparece en el
+// mismo historial que una detectada por cámara).
+
+function switchSearchMode(mode) {
+  const next = mode === 'manual' ? 'manual' : 'camera';
+  if (next === searchMode) return;
+  searchMode = next;
+
+  const isManual = next === 'manual';
+
+  document.querySelectorAll('.view-tab[data-mode]').forEach(t => {
+    const on = t.dataset.mode === next;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+
+  document.getElementById('panel-camera')?.classList.toggle('hidden', isManual);
+  document.getElementById('panel-manual')?.classList.toggle('hidden', !isManual);
+
+  // El badge de estado es del modo cámara.
+  document.getElementById('cam-status')?.classList.toggle('hidden', isManual);
+
+  if (isManual) {
+    // La cámara no se ve: se apaga para no gastar batería ni CPU.
+    // Si estaba escaneando, se recuerda para retomarlo al volver.
+    resumeCameraOnSwitch = running;
+    if (running) stopCamera();
+    // El buscador refresca los resultados de la consulta actual (si hay).
+    plateSearch?.refresh().catch?.(() => {});
+    // En la PC se puede escribir con el teclado físico (comodo para probar).
+    setPhysicalKeyboard(true);
+  } else {
+    setPhysicalKeyboard(false);
+    updateHistory();
+    // Si estaba escaneando, se retoma.
+    if (resumeCameraOnSwitch) {
+      resumeCameraOnSwitch = false;
+      window.toggleScan().catch(() => {});
+    }
+  }
+}
+
+/**
+ * Teclado físico (solo PC): en modo Manual las teclas se escriben en el
+ * buscador. En el celular manda el teclado virtual de la vista.
+ * El listener se pone y se saca con el modo para no capturar teclas en
+ * otras vistas.
+ */
+function setPhysicalKeyboard(enabled) {
+  if (enabled) {
+    if (!physicalKeyboardOn) {
+      document.addEventListener('keydown', onPhysicalKeydown);
+      physicalKeyboardOn = true;
+    }
+  } else if (physicalKeyboardOn) {
+    document.removeEventListener('keydown', onPhysicalKeydown);
+    physicalKeyboardOn = false;
+  }
+}
+
+function onPhysicalKeydown(e) {
+  if (searchMode !== 'manual' || !plateSearch) return;
+  // Si el usuario está escribiendo en otro campo, no se intercepta nada.
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
+    || t.tagName === 'SELECT' || t.isContentEditable)) return;
+
+  if (e.key === 'Backspace') { plateSearch.press('BACKSPACE'); e.preventDefault(); }
+  else if (e.key === 'Enter') { plateSearch.flush(); e.preventDefault(); }
+  else if (e.key === ' ') { plateSearch.press('SPACE'); e.preventDefault(); }
+  else if (e.key.length === 1) { plateSearch.press(e.key); e.preventDefault(); }
+}
+
+/**
+ * Patente elegida en el buscador manual: mismo camino que la cámara.
+ * processPlate() muestra el resultado, resuelve el tipo y guarda el
+ * escaneo, así que el historial es el mismo en los dos modos.
+ */
+function selectManualPlate(row) {
+  const plate = (row?.plate || '').toUpperCase().trim();
+  if (!plate) return;
+  // La búsqueda manual no viene del OCR: se limpian los datos del último
+  // frame para no guardar en la base los datos de otra patente.
+  lastRawText = '';
+  lastCorrected = '';
+  lastPlateBox = null;
+  processPlate(plate);
+  // El cartel de resultado (compartido) queda debajo del teclado: se trae
+  // a la vista para que el usuario vea el veredicto sin scrollear a mano.
+  document.getElementById('cam-result')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ============================================================
+// RESPALDO DE REALTIME (polling cada 5 minutos)
+// ============================================================
+// Realtime es lo ideal (los cambios llegan en segundos), pero si el canal
+// no está disponible (o el usuario es invitado y no hay user_id), este
+// polling mantiene al día el historial y los resultados del buscador.
+
+const REFRESH_POLL_MS = 5 * 60 * 1000;
+
+function startRefreshPolling() {
+  if (refreshPollTimer) return;
+  refreshPollTimer = setInterval(() => { refreshData(); }, REFRESH_POLL_MS);
+}
+
+async function refreshData() {
+  // No gastar datos si la app está en segundo plano.
+  if (document.hidden) return;
+  try {
+    await refreshPlatesCache();
+    // El buscador se refresca sin tocar lo que el usuario está escribiendo.
+    if (plateSearch && searchMode === 'manual') await plateSearch.refresh();
+    await reloadScanHistory();
+  } catch (e) {
+    console.warn('Refresh periódico falló:', e);
+  }
+}
+
+async function reloadScanHistory() {
+  if (!currentUser) return;
+  const history = await getScanHistory({ userId: currentUser.id, limit: 20 });
+  scanHistory = history.map(h => ({
+    plate: h.plate,
+    status: h.status,
+    time: new Date(h.created_at).getTime(),
+  }));
+  updateHistory();
+}
+
+// ============================================================
 // PROCESAR PATENTE DETECTADA (usa Supabase)
 // ============================================================
 // La consulta a Supabase NO se espera dentro del loop de cámara: se
@@ -1105,13 +1286,14 @@ async function syncPlate(plate, localType) {
       corrected_text: lastCorrected,
       detection_box: lastPlateBox
     });
+    // El historial es el mismo para los dos modos: la patente detectada por
+    // cámara o elegida a mano entra acá y se ve al instante en la lista.
+    pushScanHistory({ plate, status: type, time: Date.now() });
   } catch (e) {
     console.warn('Error guardando scan:', e);
-    // El historial local guarda el TIPO (igual que la base), no la clase CSS.
-    scanHistory.unshift({ plate, status: type, time: Date.now() });
-    if (scanHistory.length > 20) scanHistory.pop();
-    localStorage.setItem('plateHistory', JSON.stringify(scanHistory));
-    localStorage.setItem('plateStats', JSON.stringify(scanCount));
+    // Sin conexión: se guarda solo en el dispositivo (el historial local
+    // guarda el TIPO de la patente, no la clase CSS).
+    pushScanHistory({ plate, status: type, time: Date.now() });
   }
 }
 
@@ -1167,6 +1349,56 @@ function renderPlateResult(plate, type) {
 // ============================================================
 // HISTORIAL Y CONTACTOS (renderizado igual, datos de Supabase)
 // ============================================================
+
+/**
+ * Agrega una entrada al historial compartido (Cámara / Manual) sin
+ * duplicarla.
+ *
+ * La misma patente puede llegar dos veces: una por el guardado local
+ * (detección por cámara o búsqueda manual) y otra por la suscripción
+ * Realtime de `scan_history`. Si es la misma patente en menos de 10 s, se
+ * actualiza la entrada existente en lugar de duplicarla.
+ */
+function pushScanHistory(entry) {
+  const last = scanHistory[0];
+  if (last
+      && last.plate === entry.plate
+      && Math.abs((entry.time || 0) - (last.time || 0)) < 10000) {
+    last.status = entry.status;
+    updateHistory();
+    return;
+  }
+  scanHistory.unshift(entry);
+  if (scanHistory.length > 20) scanHistory.pop();
+  persistLocalHistory();
+  updateHistory();
+}
+
+/** Guarda historial y stats en el dispositivo (respaldo sin conexión). */
+function persistLocalHistory() {
+  try {
+    localStorage.setItem('plateHistory', JSON.stringify(scanHistory));
+    localStorage.setItem('plateStats', JSON.stringify(scanCount));
+  } catch (e) { /* almacenamiento lleno o bloqueado: no es crítico */ }
+}
+
+/**
+ * Recupera el historial guardado en el dispositivo.
+ * Se usa al entrar como invitado: sin usuario de Supabase no hay
+ * suscripción Realtime, así que el historial vive en el equipo.
+ */
+function loadLocalHistory() {
+  try {
+    const raw = localStorage.getItem('plateHistory');
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr) && arr.length) {
+      scanHistory = arr.slice(0, 20);
+      updateHistory();
+    }
+  } catch (e) { /* historial local corrupto: se ignora */ }
+}
+
 function updateHistory() {
   const list = document.getElementById('history-list');
   if (!list) return;
