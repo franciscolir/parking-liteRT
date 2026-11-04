@@ -13,11 +13,16 @@ import {
   lookupPlate, getPlates, reportPlate,
   saveScan, getScanHistory, getScanStats,
   getContacts, addContact, updateContact, deleteContact,
+  getEmergencyContacts, saveEmergencyContacts,
   getProfile, updateProfile,
   subscribeToPlates, subscribeToScanHistory, subscribeToContacts,
   isAuthenticated, getUserId,
   PlateType, ScanStatus, ContactType
 } from './supabase-client.js';
+import {
+  DEFAULT_EMERGENCY_CONTACTS,
+  mergeContactLists,
+} from './emergency-contacts.js';
 // Exponer para debugging
 //window.supabase = supabase;
 
@@ -50,6 +55,9 @@ let userProfile = null;
 let scanHistory = [];
 let scanCount = { total: 0, registered: 0, stolen: 0, unknown: 0 };
 let contacts = [];
+// Los 5 números por defecto de Llamadas: globales (app_settings).
+// Arranca con el fallback local y se reemplaza al cargar la BD.
+let emergencyContacts = DEFAULT_EMERGENCY_CONTACTS;
 let platesCache = { special_needs: [], administration: [], first_aid: [] };
 let subscriptions = [];
 
@@ -333,6 +341,7 @@ function setupUIEvents() {
 
   // Contactos
   document.getElementById('btn-add-contact').onclick = handleAddContact;
+  document.getElementById('btn-save-default-contacts').onclick = handleSaveDefaultContacts;
 
   // Bottom nav
   document.querySelectorAll('.nav-item[data-view]').forEach(n => {
@@ -455,7 +464,16 @@ window.navigate = async function (view) {
       await initModels().catch(() => {});
       break;
     case 'call':
+      await loadEmergencyContacts();
+      updateCallViewAccess();
       renderContacts();
+      // Refresca los contactos propios en segundo plano: la vista ya
+      // se abrió con la caché y se actualiza si cambió en la base.
+      if (currentUser) {
+        getContacts(currentUser.id)
+          .then(c => { contacts = c; renderContacts(); })
+          .catch(() => {});
+      }
       break;
     case 'register':
       // Pre-fill si viene de detección
@@ -1424,16 +1442,77 @@ function updateHistory() {
   }).join('');
 }
 
+function escContact(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Lista final visible en Llamadas:
+ * los 5 por defecto (globales) + contactos propios que no sean
+ * los antiguos defaults que creaba el trigger al registrarse.
+ */
+function getAllContacts() {
+  return mergeContactLists(emergencyContacts, contacts);
+}
+
+/** Carga (o recarga) los 5 números globales desde app_settings. */
+async function loadEmergencyContacts() {
+  try {
+    const remote = await getEmergencyContacts();
+    if (remote) emergencyContacts = remote;
+  } catch (e) {
+    console.warn('No se pudieron cargar los números por defecto:', e);
+  }
+}
+
+/**
+ * Solo el admin ve los formularios de la vista Llamadas:
+ * "Números por defecto" (globales) y "Agregar contacto".
+ */
+function updateCallViewAccess() {
+  const isAdmin = userProfile?.role === 'admin';
+  document.getElementById('card-default-contacts')?.classList.toggle('hidden', !isAdmin);
+  document.getElementById('card-add-contact')?.classList.toggle('hidden', !isAdmin);
+  if (isAdmin) renderDefaultContactInputs();
+}
+
+/** Rellena los inputs de edición de los 5 números (solo admin). */
+function renderDefaultContactInputs() {
+  const box = document.getElementById('default-contacts-list');
+  if (!box) return;
+  box.innerHTML = emergencyContacts.map((c, i) => `
+    <div class="form-group">
+      <label>${escContact(c.name)}</label>
+      <input type="tel" id="default-contact-phone-${i}" value="${escContact(c.phone)}"
+             placeholder="Sin número" inputmode="tel" autocomplete="off">
+    </div>
+  `).join('');
+}
+
 function renderContacts() {
   const grid = document.getElementById('contact-grid');
   if (!grid) return;
-  grid.innerHTML = contacts.map(c => `
+
+  const list = getAllContacts();
+  grid.innerHTML = list.map(c => {
+    const phone = String(c.phone || '').trim();
+    const svg = '<svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
+    const callBtn = phone
+      ? `<button class="call-btn" onclick='callContact(${escContact(JSON.stringify(phone))})'>${svg}</button>`
+      : `<button class="call-btn" disabled title="Sin número">${svg}</button>`;
+    return `
     <div class="contact-card">
-      <div class="avatar ${c.type || 'custom'}">${c.icon || '📞'}</div>
-      <div class="info"><div class="name">${c.name}</div><div class="phone">${c.phone}</div></div>
-      <button class="call-btn" onclick="callContact('${c.phone}')"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></button>
+      <div class="avatar ${escContact(c.type || 'custom')}">${escContact(c.icon || '📞')}</div>
+      <div class="info"><div class="name">${escContact(c.name)}</div><div class="phone">${escContact(phone) || 'Sin número'}</div></div>
+      ${callBtn}
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 window.callContact = (p) => { window.location.href = 'tel:' + p; };
@@ -1459,6 +1538,26 @@ function getIconForType(type) {
   return icons[type] || '📞';
 }
 
+/**
+ * Guarda los 5 números por defecto en app_settings (globales):
+ * el cambio se ve de inmediato para todos los usuarios.
+ */
+async function handleSaveDefaultContacts() {
+  const list = emergencyContacts.map((c, i) => ({
+    ...c,
+    phone: (document.getElementById(`default-contact-phone-${i}`)?.value ?? '').trim(),
+  }));
+
+  try {
+    await saveEmergencyContacts(list);
+    emergencyContacts = list;
+    renderContacts();
+    showToast('Números por defecto actualizados', 'success');
+  } catch (e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+}
+
 // ============================================================
 // REPORTE WHATSAPP
 // ============================================================
@@ -1471,7 +1570,7 @@ function sendWhatsAppReport() {
   if (!p || !v || !i) { showToast('Complete patente, vehículo e incidente', 'error'); return; }
 
   const msg = ['🚨 *REPORTE DE INCIDENTE*', '', '*Patente:* ' + p, '*Vehículo:* ' + v, '*Incidente:* ' + i, l ? '*Ubicación:* ' + l : '', d ? '*Descripción:* ' + d : '', '', 'Enviado desde PlateDetect'].filter(Boolean).join('\n');
-  const officePhone = contacts.find(c => c.type === 'office')?.phone || '';
+  const officePhone = getAllContacts().find(c => c.type === 'office' && c.phone)?.phone || '';
   window.open('https://wa.me/' + (officePhone ? officePhone : '') + '?text=' + encodeURIComponent(msg), '_blank');
 }
 
