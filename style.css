@@ -733,12 +733,16 @@ html, body {
   display: flex;
   gap: 5px;
   margin-bottom: 5px;
+  /* Las filas con menos teclas (sin vocales) quedan centradas y con el
+     mismo ancho de tecla que las demás. */
+  justify-content: center;
 }
 .vk-row:last-child { margin-bottom: 0; }
 
 .vk-key {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
+  max-width: 46px;
   padding: 12px 2px;
   background: var(--card);
   border: 1px solid rgba(255, 255, 255, .06);
@@ -757,10 +761,11 @@ html, body {
   transform: scale(.95);
 }
 
-/* Teclas anchas: borrar, limpiar y espacio. */
-.vk-wide { flex: 1.6; font-size: 13px; font-weight: 500; }
-.vk-clear { flex: 1.6; font-size: 13px; font-weight: 500; }
-.vk-space { flex: 4; font-size: 13px; font-weight: 500; }
+/* Teclas anchas: borrar, limpiar y espacio.
+   (max-width: none para que no hereden el tope de las teclas normales). */
+.vk-wide { flex: 0 0 62px; max-width: none; font-size: 13px; font-weight: 500; }
+.vk-clear { flex: 0 0 78px; max-width: none; font-size: 13px; font-weight: 500; }
+.vk-space { flex: 1 1 auto; max-width: none; font-size: 13px; font-weight: 500; }
 
 /* ============================ REGISTER ============================ */
 .form-group { margin-bottom: 14px; }

@@ -22,11 +22,15 @@ import { TYPE_LABELS } from './plate-types.js';
 // Teclado virtual
 // ------------------------------------------------------------
 // 'BACKSPACE' = borrar, 'SPACE' = espacio, 'CLEAR' = limpiar todo.
-// Están las 26 letras (las patentes usan 2-4 letras) y los 10 números.
+//
+// SIN VOCALES: el formato de patente vigente (BB·BB·10) usa solo
+// consonantes y números, así que A, E, I, O y U no están en el teclado
+// (evita tipear letras que después no van a existir).
+// Están las 21 consonantes del español y los 10 números.
 export const KEYBOARD_ROWS = [
   ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
-  ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-  ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
+  ['Q', 'W', 'R', 'T', 'Y', 'P'],
+  ['S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
   ['Z', 'X', 'C', 'V', 'B', 'N', 'M', 'BACKSPACE'],
   ['CLEAR', 'SPACE'],
 ];
@@ -39,7 +43,7 @@ export const KEY_LABELS = {
 };
 
 /** Espera antes de consultar a Supabase (ms). */
-export const DEBOUNCE_MS = 300;
+export const DEBOUNCE_MS = 200;
 
 /** Máximo de resultados que se muestran. */
 export const MAX_RESULTS = 30;
@@ -263,7 +267,7 @@ export class PlateSearchView {
     if (!this.statusEl) return;
 
     const messages = {
-      idle: 'Escribí la patente con el teclado.',
+      idle: '',
       loading: 'Buscando…',
       empty: 'Sin resultados para esa patente.',
       error: 'Error al buscar: ' + (this.error || 'intentá de nuevo'),

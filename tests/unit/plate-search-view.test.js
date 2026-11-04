@@ -70,13 +70,20 @@ describe('plate-search-view.js', () => {
   // Teclado virtual
   // ============================================================
   describe('teclado virtual', () => {
-    it('tiene letras, números, borrar y espacio', () => {
-      expect(TODAS_LAS_TECLAS).toContain('A');
-      expect(TODAS_LAS_TECLAS).toContain('Z');
+    it('tiene las consonantes, los números, borrar y espacio', () => {
+      for (const c of 'BCDFGHJKLMNPQRSTVWXYZ'.split('')) {
+        expect(TODAS_LAS_TECLAS).toContain(c);
+      }
       expect(TODAS_LAS_TECLAS).toContain('0');
       expect(TODAS_LAS_TECLAS).toContain('9');
       expect(TODAS_LAS_TECLAS).toContain('BACKSPACE');
       expect(TODAS_LAS_TECLAS).toContain('SPACE');
+    });
+
+    it('no tiene vocales (el formato de patente no las usa)', () => {
+      for (const v of ['A', 'E', 'I', 'O', 'U']) {
+        expect(TODAS_LAS_TECLAS).not.toContain(v);
+      }
     });
 
     it('las teclas especiales tienen etiqueta visible', () => {
