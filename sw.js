@@ -57,6 +57,7 @@ const PRECACHE = [
   'camera.js',
   'corrector.js',
   'detector.js',
+  'emergency-contacts.js',
   'guest-auth.js',
   'ocr.js',
   'plate-parser.js',
