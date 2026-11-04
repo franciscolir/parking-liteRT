@@ -70,14 +70,15 @@ describe('plate-search-view.js', () => {
   // Teclado virtual
   // ============================================================
   describe('teclado virtual', () => {
-    it('tiene las consonantes, los números, borrar y limpiar', () => {
+    it('tiene las consonantes y los números en las filas', () => {
       for (const c of 'BCDFGHJKLMNPQRSTVWXYZ'.split('')) {
         expect(TODAS_LAS_TECLAS).toContain(c);
       }
       expect(TODAS_LAS_TECLAS).toContain('0');
       expect(TODAS_LAS_TECLAS).toContain('9');
-      expect(TODAS_LAS_TECLAS).toContain('BACKSPACE');
-      expect(TODAS_LAS_TECLAS).toContain('CLEAR');
+      // Borrar y Limpiar no son teclas de fila: van a los costados.
+      expect(TODAS_LAS_TECLAS).not.toContain('BACKSPACE');
+      expect(TODAS_LAS_TECLAS).not.toContain('CLEAR');
     });
 
     it('no tiene vocales (el formato de patente no las usa)', () => {
@@ -106,10 +107,25 @@ describe('plate-search-view.js', () => {
       expect(KEYBOARD_ROWS[2]).not.toContain('L');
     });
 
-    it('la tecla de borrar ocupa la última fila, donde estaba el espacio', () => {
-      const ultimaFila = KEYBOARD_ROWS[KEYBOARD_ROWS.length - 1];
-      expect(ultimaFila).toContain('BACKSPACE');
-      expect(ultimaFila).toContain('CLEAR');
+    it('los botones de Limpiar y Borrar van a los costados, en vertical', () => {
+      const dom = mountDom();
+      const view = new PlateSearchView({ searchFn: vi.fn() });
+      view.init(dom);
+
+      const laterales = dom.querySelectorAll('#manual-keyboard .vk-side');
+      expect(laterales.length).toBe(2);
+      expect(laterales[0].dataset.key).toBe('CLEAR');
+      expect(laterales[1].dataset.key).toBe('BACKSPACE');
+
+      // Los laterales están al rededor del bloque de letras (no en una fila).
+      const block = dom.querySelector('#manual-keyboard .vk-block');
+      expect(block.children.length).toBe(3);  // limpiar + letras + borrar
+      expect(block.firstElementChild.dataset.key).toBe('CLEAR');
+      expect(block.lastElementChild.dataset.key).toBe('BACKSPACE');
+      expect(block.children[1].classList.contains('vk-letters')).toBe(true);
+
+      // El bloque de letras tiene las 3 filas de consonantes.
+      expect(block.querySelectorAll('.vk-letters .vk-row').length).toBe(3);
     });
 
     it('las teclas especiales tienen etiqueta visible', () => {
@@ -117,13 +133,13 @@ describe('plate-search-view.js', () => {
       expect(KEY_LABELS.CLEAR).toBeTruthy();
     });
 
-    it('dibuja una tecla por cada tecla del teclado', () => {
+    it('dibuja una tecla por cada tecla del teclado, más los 2 botones laterales', () => {
       const dom = mountDom();
       const view = new PlateSearchView({ searchFn: vi.fn() });
       view.init(dom);
 
       const keys = dom.querySelectorAll('#manual-keyboard .vk-key');
-      expect(keys.length).toBe(TODAS_LAS_TECLAS.length);
+      expect(keys.length).toBe(TODAS_LAS_TECLAS.length + 2);
       expect(dom.querySelectorAll('#manual-keyboard .vk-row').length).toBe(KEYBOARD_ROWS.length);
     });
 

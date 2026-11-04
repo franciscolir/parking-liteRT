@@ -27,14 +27,14 @@ import { TYPE_LABELS } from './plate-types.js';
 // consonantes y números, así que A, E, I, O y U no están en el teclado
 // (evita tipear letras que después no van a existir).
 // Las 21 consonantes del español van repartidas en 3 filas de 7.
-// No hay tecla de espacio: las patentes no llevan espacios y el lugar de
-// la barra de espacio lo ocupa la tecla de borrar.
+// No hay tecla de espacio: las patentes no llevan espacios. En su lugar,
+// a los lados del bloque de letras van los botones verticales de
+// Limpiar y Borrar (aprovechan el espacio libre de los costados).
 export const KEYBOARD_ROWS = [
   ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
   ['Q', 'W', 'R', 'T', 'Y', 'P', 'L'],
   ['S', 'D', 'F', 'G', 'H', 'J', 'K'],
   ['Z', 'X', 'C', 'V', 'B', 'N', 'M'],
-  ['CLEAR', 'BACKSPACE'],
 ];
 
 /** Texto visible de las teclas especiales. */
@@ -149,26 +149,68 @@ export class PlateSearchView {
     if (!this.keyboardEl) return;
     this.keyboardEl.innerHTML = '';
 
-    for (const row of KEYBOARD_ROWS) {
-      const rowEl = document.createElement('div');
-      rowEl.className = 'vk-row';
+    // Fila 0: los números ocupan todo el ancho.
+    this.keyboardEl.appendChild(this._buildRow(KEYBOARD_ROWS[0]));
 
-      for (const key of row) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'vk-key';
-        // La tecla de borrar ocupa el lugar de la barra de espacio: es la
-        // tecla ancha de la última fila.
-        if (key === 'BACKSPACE') btn.classList.add('vk-wide');
-        if (key === 'CLEAR') btn.classList.add('vk-clear');
-        btn.textContent = KEY_LABELS[key] || key;
-        btn.dataset.key = key;
-        btn.addEventListener('click', () => this.press(key));
-        rowEl.appendChild(btn);
-      }
+    // Bloque de letras: los 3 filas de consonantes al centro y, a los
+    // lados, los botones verticales de Limpiar y Borrar. Así se aprovecha
+    // el espacio que sobraba a izquierda y derecha (las filas de letras
+    // son más angostas que la de números) y el teclado queda más bajo.
+    const block = document.createElement('div');
+    block.className = 'vk-block';
 
-      this.keyboardEl.appendChild(rowEl);
+    block.appendChild(this._buildSideKey('CLEAR'));
+
+    const letters = document.createElement('div');
+    letters.className = 'vk-letters';
+    for (const row of KEYBOARD_ROWS.slice(1)) {
+      letters.appendChild(this._buildRow(row));
     }
+    block.appendChild(letters);
+
+    block.appendChild(this._buildSideKey('BACKSPACE'));
+
+    this.keyboardEl.appendChild(block);
+  }
+
+  /** Crea una fila de teclas. */
+  _buildRow(keys) {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'vk-row';
+
+    for (const key of keys) {
+      rowEl.appendChild(this._buildKey(key));
+    }
+
+    return rowEl;
+  }
+
+  /** Crea una tecla normal (letra o número). */
+  _buildKey(key) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'vk-key';
+    btn.textContent = KEY_LABELS[key] || key;
+    btn.dataset.key = key;
+    btn.addEventListener('click', () => this.press(key));
+    return btn;
+  }
+
+  /**
+   * Crea un botón lateral vertical (ocupa la altura de las 3 filas de
+   * letras). El de "Limpiar" escribe el texto de lado; el de "Borrar"
+   * deja el ícono ⌫ derecho.
+   */
+  _buildSideKey(key) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'vk-key vk-side';
+    if (key === 'BACKSPACE') btn.classList.add('vk-side-icon');
+    btn.textContent = KEY_LABELS[key] || key;
+    btn.dataset.key = key;
+    btn.setAttribute('aria-label', key === 'BACKSPACE' ? 'Borrar el último carácter' : 'Limpiar la patente');
+    btn.addEventListener('click', () => this.press(key));
+    return btn;
   }
 
   /** Presiona una tecla del teclado virtual. */

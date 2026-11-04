@@ -732,12 +732,29 @@ html, body {
 .vk-row {
   display: flex;
   gap: 5px;
-  margin-bottom: 5px;
   /* Las filas con menos teclas (sin vocales) quedan centradas y con el
      mismo ancho de tecla que las demás. */
   justify-content: center;
 }
 .vk-row:last-child { margin-bottom: 0; }
+
+/* Bloque de letras: los botones de los costados (Limpiar / Borrar) son
+   verticales y ocupan la altura de las 3 filas de letras. Aprovechan el
+   espacio que sobraba a izquierda y derecha y ahorran una fila completa
+   (el teclado queda más bajo). */
+.vk-block {
+  display: flex;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.vk-letters {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
 
 .vk-key {
   flex: 1 1 0;
@@ -761,11 +778,26 @@ html, body {
   transform: scale(.95);
 }
 
-/* Teclas anchas: la de borrar ocupa el lugar de la barra de espacio
-   (las patentes no llevan espacios) y "Limpiar" tiene ancho fijo.
-   (max-width: none para que no hereden el tope de las teclas normales). */
-.vk-wide { flex: 1 1 auto; max-width: none; font-size: 13px; font-weight: 500; }
-.vk-clear { flex: 0 0 78px; max-width: none; font-size: 13px; font-weight: 500; }
+/* Botón lateral vertical (Limpiar / Borrar): ocupa toda la altura de las
+   3 filas de letras. El texto se escribe de lado, de arriba hacia abajo. */
+.vk-side {
+  flex: 0 0 44px;
+  max-width: none;
+  padding: 8px 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  writing-mode: vertical-rl;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: .5px;
+}
+
+/* El ícono de borrar se deja derecho (no-rotado). */
+.vk-side-icon {
+  writing-mode: horizontal-tb;
+  font-size: 20px;
+}
 
 /* ============================ REGISTER ============================ */
 .form-group { margin-bottom: 14px; }
