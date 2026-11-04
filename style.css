@@ -585,6 +585,71 @@ html, body {
   box-shadow: 0 0 0 0 rgba(239,68,68,.6);
 }
 
+/* ============================================================
+   COLORES POR TIPO DE PATENTE (fuente única: plate-types.js)
+   ------------------------------------------------------------
+   - Necesidades especiales (NE) → VERDE   (--success)
+   - Administración (AD)           → AZUL    (--primary)
+   - Primeros auxilios (PA)        → ROJO    (--danger)
+
+   El mismo color se usa en: la píldora de tipo de la lista de
+   patentes, el historial de escaneos, las mini tarjetas de métricas
+   (NE/AD/PA) y la tarjeta de resultado de la cámara.
+
+   Las clases legacy (.reg / .stolen / .unk) se conservan por si
+   quedan filas viejas guardadas en la base.
+   ============================================================ */
+
+/* --- Píldora de tipo en la lista de patentes --- */
+.plate-row-badge.ne { background: rgba(34,197,94,.15);  color: var(--success); }
+.plate-row-badge.ad { background: rgba(59,130,246,.15); color: var(--primary); }
+.plate-row-badge.pa { background: rgba(239,68,68,.15);  color: var(--danger); }
+
+/* --- Etiqueta de tipo en el historial de escaneos --- */
+.history-item .h-status.ne { background: rgba(34,197,94,.2);  color: var(--success); }
+.history-item .h-status.ad { background: rgba(59,130,246,.2); color: var(--primary); }
+.history-item .h-status.pa { background: rgba(239,68,68,.2);  color: var(--danger); }
+
+/* --- Mini tarjetas de métricas (NE / AD / PA / TOT) --- */
+.mini-card.mini-ne { border-color: rgba(34,197,94,.35); }
+.mini-card.mini-ad { border-color: rgba(59,130,246,.35); }
+.mini-card.mini-pa { border-color: rgba(239,68,68,.35); }
+.mini-card.mini-ne .mini-card-value { color: var(--success); }
+.mini-card.mini-ad .mini-card-value { color: var(--primary); }
+.mini-card.mini-pa .mini-card-value { color: var(--danger); }
+.mini-card.mini-ne .mini-card-label { color: rgba(34,197,94,.75); }
+.mini-card.mini-ad .mini-card-label { color: rgba(59,130,246,.75); }
+.mini-card.mini-pa .mini-card-label { color: rgba(239,68,68,.75); }
+
+/* --- Tarjeta de resultado de la cámara --- */
+.camera-result.ne .result-card-inner {
+  border-color: var(--success);
+  background: rgba(34, 197, 94, .1);
+}
+.camera-result.ad .result-card-inner {
+  border-color: var(--primary);
+  background: rgba(59, 130, 246, .1);
+}
+.camera-result.pa .result-card-inner {
+  border-color: var(--danger);
+  background: rgba(239, 68, 68, .1);
+}
+.camera-result.ne .plate-number { color: var(--success); }
+.camera-result.ad .plate-number { color: var(--primary); }
+.camera-result.pa .plate-number { color: var(--danger); }
+
+/* --- Destello VERDE de confirmación (parpadea una sola vez) ---
+   Se aplica al confirmar que la patente está registrada; después
+   queda el color del tipo. */
+@keyframes confirmFlashGreen {
+  0%   { box-shadow: 0 0 0 0 rgba(0,255,102,.9); border-color: #00ff66; }
+  55%  { box-shadow: 0 0 0 18px rgba(0,255,102,0); border-color: #00ff66; }
+  100% { box-shadow: 0 0 0 0 rgba(0,255,102,0); }
+}
+.camera-result .result-card-inner.flash-confirm {
+  animation: confirmFlashGreen .5s ease-out;
+}
+
 .camera-history { margin: 0 16px 12px; }
 
 .camera-history h3 {

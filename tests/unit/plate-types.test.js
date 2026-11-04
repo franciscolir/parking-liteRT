@@ -5,8 +5,15 @@ import {
   TYPE_LABELS,
   REVIEW_LABEL,
   SCAN_STATUS_LABELS,
+  PLATE_TYPE_COLORS,
+  CONFIRM_FLASH_COLOR,
+  CONFIRM_FLASH_MS,
+  UNKNOWN_PLATE_COLOR,
   isValidPlateType,
   getTypeLabel,
+  getTypeClass,
+  getTypeColor,
+  getFrameColor,
   getScanStatus,
   detectPlateType,
 } from '../../plate-types.js';
@@ -81,6 +88,66 @@ describe('plate-types.js', () => {
           'special_needs', 'administration', 'first_aid', 'unknown', 'error',
         ])
       );
+    });
+  });
+
+  describe('colores por tipo de patente', () => {
+    it('NE = verde, AD = azul, PA = rojo', () => {
+      expect(getTypeColor('special_needs')).toBe('#22c55e'); // verde
+      expect(getTypeColor('administration')).toBe('#3b82f6');  // azul
+      expect(getTypeColor('first_aid')).toBe('#ef4444');      // rojo
+    });
+
+    it('la clase CSS de cada tipo es ne / ad / pa', () => {
+      expect(getTypeClass('special_needs')).toBe('ne');
+      expect(getTypeClass('administration')).toBe('ad');
+      expect(getTypeClass('first_aid')).toBe('pa');
+    });
+
+    it('un tipo desconocido no tiene color ni clase válida', () => {
+      expect(getTypeColor('raro')).toBeNull();
+      expect(getTypeColor(undefined)).toBeNull();
+      expect(getTypeClass('raro')).toBe('unk');
+      expect(getTypeClass(null)).toBe('unk');
+    });
+
+    it('el mapa TYPE_LABELS lleva el color y la clase del tipo', () => {
+      for (const t of PLATE_TYPES) {
+        expect(TYPE_LABELS[t.value].cls).toBe(t.cls);
+        expect(TYPE_LABELS[t.value].color).toBe(t.color);
+        expect(PLATE_TYPE_COLORS[t.value]).toBe(t.color);
+      }
+    });
+
+    it('el badge del historial usa la clase del tipo, no la del estado', () => {
+      expect(getScanStatus('special_needs').cls).toBe('ne');
+      expect(getScanStatus('administration').cls).toBe('ad');
+      expect(getScanStatus('first_aid').cls).toBe('pa');
+    });
+  });
+
+  describe('getFrameColor', () => {
+    it('sin confirmación devuelve el color del tipo', () => {
+      expect(getFrameColor('special_needs')).toBe('#22c55e');
+      expect(getFrameColor('administration')).toBe('#3b82f6');
+      expect(getFrameColor('first_aid')).toBe('#ef4444');
+    });
+
+    it('durante la confirmación devuelve el verde de parpadeo', () => {
+      expect(getFrameColor('special_needs', true)).toBe(CONFIRM_FLASH_COLOR);
+      expect(getFrameColor('administration', true)).toBe(CONFIRM_FLASH_COLOR);
+      expect(getFrameColor('first_aid', true)).toBe(CONFIRM_FLASH_COLOR);
+      expect(CONFIRM_FLASH_COLOR).toBe('#00ff66');
+    });
+
+    it('una patente sin tipo usa el ámbar de "no registrado"', () => {
+      expect(getFrameColor('unknown')).toBe(UNKNOWN_PLATE_COLOR);
+      expect(getFrameColor(null)).toBe(UNKNOWN_PLATE_COLOR);
+      expect(UNKNOWN_PLATE_COLOR).toBe('#ffcc00');
+    });
+
+    it('el parpadeo dura medio segundo', () => {
+      expect(CONFIRM_FLASH_MS).toBe(500);
     });
   });
 
