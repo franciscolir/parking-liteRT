@@ -66,6 +66,7 @@ const PRECACHE = [
   'supabase-client.js',
   'supabase-config.js',
   'validator.js',
+  'whatsapp.js',
   'vendor/ort-setup.js',
   'vendor/ort.all.bundle.min.mjs',
   'vendor/ort.wasm.bundle.min.mjs',

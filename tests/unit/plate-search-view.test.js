@@ -13,6 +13,7 @@ import {
   KEY_LABELS,
   DEBOUNCE_MS,
   MAX_LENGTH,
+  MIN_QUERY_LENGTH,
 } from '../../plate-search-view.js';
 
 /** Monta el DOM mínimo que usa la vista de búsqueda manual. */
@@ -258,9 +259,10 @@ describe('plate-search-view.js', () => {
       view.init(mountDom());
 
       view.press('A');
+      view.press('B');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
 
-      view.press('B');
+      view.press('C');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
 
       // La primera respuesta llega tarde: no debe pisar los resultados nuevos.
@@ -268,6 +270,80 @@ describe('plate-search-view.js', () => {
       await vi.advanceTimersByTimeAsync(0);
 
       expect(view.results.map(r => r.plate)).toEqual(['AB123']);
+    });
+
+    // ============================================================
+    // Mínimo de caracteres para buscar
+    // ============================================================
+    it('no consulta con un solo carácter', async () => {
+      const searchFn = vi.fn().mockResolvedValue([]);
+      const view = new PlateSearchView({ searchFn });
+      view.init(mountDom());
+
+      view.press('A');
+      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+
+      expect(searchFn).not.toHaveBeenCalled();
+      expect(view.state).toBe('short');
+      expect(view.results).toEqual([]);
+    });
+
+    it('consulta recién cuando hay 2 caracteres', async () => {
+      const searchFn = vi.fn().mockResolvedValue([]);
+      const view = new PlateSearchView({ searchFn });
+      view.init(mountDom());
+
+      view.press('A');
+      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+      expect(searchFn).not.toHaveBeenCalled();
+
+      view.press('B');
+      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+      expect(searchFn).toHaveBeenCalledTimes(1);
+      expect(searchFn).toHaveBeenCalledWith(expect.objectContaining({ search: 'AB' }));
+    });
+
+    it('el mínimo son 2 caracteres', () => {
+      expect(MIN_QUERY_LENGTH).toBe(2);
+    });
+
+    it('avisa que hay que escribir más caracteres', async () => {
+      const dom = mountDom();
+      const status = dom.querySelector('#manual-status');
+      const view = new PlateSearchView({ searchFn: vi.fn() });
+      view.init(dom);
+
+      view.press('A');
+      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+
+      expect(status.textContent).toContain('2 caracteres');
+    });
+
+    it('borrar hasta dejar 1 carácter vuelve a cortar la búsqueda', async () => {
+      const searchFn = vi.fn().mockResolvedValue([]);
+      const view = new PlateSearchView({ searchFn });
+      view.init(mountDom());
+
+      view.press('A');
+      view.press('B');
+      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+      expect(searchFn).toHaveBeenCalledTimes(1);
+
+      view.press('BACKSPACE');
+      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+      expect(searchFn).toHaveBeenCalledTimes(1);
+      expect(view.state).toBe('short');
+    });
+
+    it('refresh() no consulta si la consulta es muy corta', async () => {
+      const searchFn = vi.fn().mockResolvedValue([]);
+      const view = new PlateSearchView({ searchFn });
+      view.init(mountDom());
+
+      view.press('A');
+      await view.refresh();
+
+      expect(searchFn).not.toHaveBeenCalled();
     });
   });
 
@@ -286,6 +362,7 @@ describe('plate-search-view.js', () => {
       view.init(dom);
 
       view.press('A');
+      view.press('B');
       // flush() arranca la búsqueda sin esperar el debounce.
       const pending = view.flush();
       expect(view.state).toBe('loading');
@@ -296,7 +373,7 @@ describe('plate-search-view.js', () => {
       expect(status.textContent).toContain('1 resultado');
       expect(dom.querySelectorAll('.manual-result').length).toBe(1);
 
-      view.press('B');
+      view.press('C');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
       expect(view.state).toBe('empty');
       expect(status.textContent).toContain('Sin resultados');
@@ -311,6 +388,7 @@ describe('plate-search-view.js', () => {
       view.init(dom);
 
       view.press('A');
+      view.press('B');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
 
       expect(view.state).toBe('error');
@@ -327,6 +405,7 @@ describe('plate-search-view.js', () => {
       view.init(dom);
 
       view.press('A');
+      view.press('B');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
       expect(view.state).toBe('results');
 
@@ -351,6 +430,7 @@ describe('plate-search-view.js', () => {
       view.init(dom);
 
       view.press('A');
+      view.press('B');
       await view.flush();
 
       dom.querySelector('.manual-result').click();
@@ -369,6 +449,7 @@ describe('plate-search-view.js', () => {
       view.init(dom);
 
       view.press('A');
+      view.press('B');
       await view.flush();
 
       expect(dom.querySelectorAll('.manual-result img').length).toBe(0);

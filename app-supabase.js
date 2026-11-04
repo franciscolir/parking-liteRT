@@ -31,6 +31,11 @@ import {
   DEFAULT_EMERGENCY_CONTACTS,
   mergeContactLists,
 } from './emergency-contacts.js';
+import {
+  normalizeWhatsAppNumber,
+  buildIncidentReportMessage,
+  buildWhatsappUrl,
+} from './whatsapp.js';
 // Exponer para debugging
 //window.supabase = supabase;
 
@@ -355,6 +360,15 @@ function setupUIEvents() {
 
   // Registro incidente
   document.getElementById('btn-send-whatsapp').onclick = sendWhatsAppReport;
+
+  // Envío de registros por WhatsApp (solo admin, vista Llamadas)
+  document.getElementById('btn-whatsapp-report').onclick = sendWhatsAppReportToNumber;
+  loadWhatsAppPhone();
+  // El hint de la card de WhatsApp sigue al formulario de reporte.
+  ['reg-plate', 'reg-vehicle', 'reg-incident', 'reg-location', 'reg-desc'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', updateWhatsAppReportHint);
+    document.getElementById(id)?.addEventListener('change', updateWhatsAppReportHint);
+  });
 
   // Contactos
   document.getElementById('btn-add-contact').onclick = handleAddContact;
@@ -1543,13 +1557,18 @@ async function loadEmergencyContacts() {
 
 /**
  * Solo el admin ve los formularios de la vista Llamadas:
- * "Números por defecto" (globales) y "Agregar contacto".
+ * "Números por defecto" (globales), "Agregar contacto" y el envío
+ * de registros por WhatsApp.
  */
 function updateCallViewAccess() {
   const isAdmin = userProfile?.role === 'admin';
   document.getElementById('card-default-contacts')?.classList.toggle('hidden', !isAdmin);
   document.getElementById('card-add-contact')?.classList.toggle('hidden', !isAdmin);
-  if (isAdmin) renderDefaultContactInputs();
+  document.getElementById('card-whatsapp-report')?.classList.toggle('hidden', !isAdmin);
+  if (isAdmin) {
+    renderDefaultContactInputs();
+    updateWhatsAppReportHint();
+  }
 }
 
 /** Rellena los inputs de edición de los 5 números (solo admin). */
@@ -1632,17 +1651,72 @@ async function handleSaveDefaultContacts() {
 // ============================================================
 // REPORTE WHATSAPP
 // ============================================================
-function sendWhatsAppReport() {
-  const p = document.getElementById('reg-plate').value.trim().toUpperCase();
-  const v = document.getElementById('reg-vehicle').value;
-  const i = document.getElementById('reg-incident').value;
-  const l = document.getElementById('reg-location').value.trim();
-  const d = document.getElementById('reg-desc').value.trim();
-  if (!p || !v || !i) { showToast('Complete patente, vehículo e incidente', 'error'); return; }
+/** Datos del formulario de reporte de incidente (vista Registro). */
+function readIncidentForm() {
+  return {
+    plate: document.getElementById('reg-plate')?.value || '',
+    vehicle: document.getElementById('reg-vehicle')?.value || '',
+    incident: document.getElementById('reg-incident')?.value || '',
+    location: document.getElementById('reg-location')?.value || '',
+    description: document.getElementById('reg-desc')?.value || '',
+  };
+}
 
-  const msg = ['🚨 *REPORTE DE INCIDENTE*', '', '*Patente:* ' + p, '*Vehículo:* ' + v, '*Incidente:* ' + i, l ? '*Ubicación:* ' + l : '', d ? '*Descripción:* ' + d : '', '', 'Enviado desde PlateDetect'].filter(Boolean).join('\n');
+/**
+ * Manda el reporte de incidente por WhatsApp.
+ * (botón de la vista Registro: va al contacto de tipo "oficina" si hay)
+ */
+function sendWhatsAppReport() {
+  const msg = buildIncidentReportMessage(readIncidentForm());
+  if (!msg) { showToast('Complete patente, vehículo e incidente', 'error'); return; }
   const officePhone = getAllContacts().find(c => c.type === 'office' && c.phone)?.phone || '';
-  window.open('https://wa.me/' + (officePhone ? officePhone : '') + '?text=' + encodeURIComponent(msg), '_blank');
+  window.open(buildWhatsappUrl(officePhone, msg), '_blank');
+}
+
+/**
+ * Manda el reporte de incidente por WhatsApp al número que escribe
+ * el admin (vista Llamadas). El número queda guardado en el equipo
+ * para no escribirlo de nuevo cada vez.
+ */
+function sendWhatsAppReportToNumber() {
+  const input = document.getElementById('whatsapp-report-phone');
+  const raw = (input?.value || '').trim();
+  if (!raw) { showToast('Ingrese el número de destino', 'error'); return; }
+
+  const phone = normalizeWhatsAppNumber(raw);
+  if (!phone) { showToast('Número inválido', 'error'); return; }
+
+  const msg = buildIncidentReportMessage(readIncidentForm());
+  if (!msg) {
+    showToast('Complete patente, vehículo e incidente en la vista Registro', 'error');
+    return;
+  }
+
+  window.open(buildWhatsappUrl(phone, msg), '_blank');
+  try { localStorage.setItem('plateWhatsappPhone', phone); } catch (e) { /* no es crítico */ }
+  showToast('Abriendo WhatsApp…', 'success');
+}
+
+/** Muestra en la card qué reporte se va a enviar. */
+function updateWhatsAppReportHint() {
+  const hint = document.getElementById('whatsapp-report-hint');
+  if (!hint) return;
+  const { plate, incident } = readIncidentForm();
+  const p = plate.trim().toUpperCase();
+  if (!p && !incident) {
+    hint.textContent = 'Envía el reporte del incidente al número que indiques.';
+  } else {
+    hint.textContent = 'Reporte: ' + [p, incident].filter(Boolean).join(' · ');
+  }
+}
+
+/** Recupera el último número de destino usado (queda en el equipo). */
+function loadWhatsAppPhone() {
+  try {
+    const saved = localStorage.getItem('plateWhatsappPhone');
+    const input = document.getElementById('whatsapp-report-phone');
+    if (saved && input) input.value = saved;
+  } catch (e) { /* almacenamiento bloqueado: se ignora */ }
 }
 
 // ============================================================
