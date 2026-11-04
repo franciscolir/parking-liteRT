@@ -70,14 +70,14 @@ describe('plate-search-view.js', () => {
   // Teclado virtual
   // ============================================================
   describe('teclado virtual', () => {
-    it('tiene las consonantes, los números, borrar y espacio', () => {
+    it('tiene las consonantes, los números, borrar y limpiar', () => {
       for (const c of 'BCDFGHJKLMNPQRSTVWXYZ'.split('')) {
         expect(TODAS_LAS_TECLAS).toContain(c);
       }
       expect(TODAS_LAS_TECLAS).toContain('0');
       expect(TODAS_LAS_TECLAS).toContain('9');
       expect(TODAS_LAS_TECLAS).toContain('BACKSPACE');
-      expect(TODAS_LAS_TECLAS).toContain('SPACE');
+      expect(TODAS_LAS_TECLAS).toContain('CLEAR');
     });
 
     it('no tiene vocales (el formato de patente no las usa)', () => {
@@ -86,9 +86,34 @@ describe('plate-search-view.js', () => {
       }
     });
 
+    it('no tiene tecla de espacio (las patentes no llevan espacios)', () => {
+      expect(TODAS_LAS_TECLAS).not.toContain('SPACE');
+    });
+
+    it('reparte las consonantes en 3 filas de 7', () => {
+      // Fila 0 = números; las filas 1, 2 y 3 son las consonantes.
+      const filasDeLetras = KEYBOARD_ROWS.slice(1, 4);
+      expect(filasDeLetras.length).toBe(3);
+      for (const fila of filasDeLetras) {
+        expect(fila.length).toBe(7);
+      }
+      // Las 21 consonantes, todas y sin repetir.
+      const letras = filasDeLetras.flat();
+      expect(letras.length).toBe(21);
+      expect(new Set(letras).size).toBe(21);
+      // La L sube a la fila de arriba.
+      expect(KEYBOARD_ROWS[1]).toContain('L');
+      expect(KEYBOARD_ROWS[2]).not.toContain('L');
+    });
+
+    it('la tecla de borrar ocupa la última fila, donde estaba el espacio', () => {
+      const ultimaFila = KEYBOARD_ROWS[KEYBOARD_ROWS.length - 1];
+      expect(ultimaFila).toContain('BACKSPACE');
+      expect(ultimaFila).toContain('CLEAR');
+    });
+
     it('las teclas especiales tienen etiqueta visible', () => {
       expect(KEY_LABELS.BACKSPACE).toBeTruthy();
-      expect(KEY_LABELS.SPACE).toBeTruthy();
       expect(KEY_LABELS.CLEAR).toBeTruthy();
     });
 
@@ -127,6 +152,17 @@ describe('plate-search-view.js', () => {
 
       view.press('CLEAR');
       expect(view.query).toBe('');
+    });
+
+    it('ignora el espacio (las patentes no llevan espacios)', () => {
+      const dom = mountDom();
+      const view = new PlateSearchView({ searchFn: vi.fn() });
+      view.init(dom);
+
+      view.press('A');
+      view.press('SPACE');
+      view.press(' ');
+      expect(view.query).toBe('A');
     });
 
     it('no deja escribir más de MAX_LENGTH caracteres', () => {

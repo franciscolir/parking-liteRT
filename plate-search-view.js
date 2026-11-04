@@ -21,24 +21,25 @@ import { TYPE_LABELS } from './plate-types.js';
 // ------------------------------------------------------------
 // Teclado virtual
 // ------------------------------------------------------------
-// 'BACKSPACE' = borrar, 'SPACE' = espacio, 'CLEAR' = limpiar todo.
+// 'BACKSPACE' = borrar, 'CLEAR' = limpiar todo.
 //
 // SIN VOCALES: el formato de patente vigente (BB·BB·10) usa solo
 // consonantes y números, así que A, E, I, O y U no están en el teclado
 // (evita tipear letras que después no van a existir).
-// Están las 21 consonantes del español y los 10 números.
+// Las 21 consonantes del español van repartidas en 3 filas de 7.
+// No hay tecla de espacio: las patentes no llevan espacios y el lugar de
+// la barra de espacio lo ocupa la tecla de borrar.
 export const KEYBOARD_ROWS = [
   ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
-  ['Q', 'W', 'R', 'T', 'Y', 'P'],
-  ['S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
-  ['Z', 'X', 'C', 'V', 'B', 'N', 'M', 'BACKSPACE'],
-  ['CLEAR', 'SPACE'],
+  ['Q', 'W', 'R', 'T', 'Y', 'P', 'L'],
+  ['S', 'D', 'F', 'G', 'H', 'J', 'K'],
+  ['Z', 'X', 'C', 'V', 'B', 'N', 'M'],
+  ['CLEAR', 'BACKSPACE'],
 ];
 
 /** Texto visible de las teclas especiales. */
 export const KEY_LABELS = {
   BACKSPACE: '⌫',
-  SPACE: 'Espacio',
   CLEAR: 'Limpiar',
 };
 
@@ -156,9 +157,10 @@ export class PlateSearchView {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'vk-key';
+        // La tecla de borrar ocupa el lugar de la barra de espacio: es la
+        // tecla ancha de la última fila.
         if (key === 'BACKSPACE') btn.classList.add('vk-wide');
         if (key === 'CLEAR') btn.classList.add('vk-clear');
-        if (key === 'SPACE') btn.classList.add('vk-space');
         btn.textContent = KEY_LABELS[key] || key;
         btn.dataset.key = key;
         btn.addEventListener('click', () => this.press(key));
@@ -173,7 +175,7 @@ export class PlateSearchView {
   press(key) {
     if (key === 'BACKSPACE') this.query = this.query.slice(0, -1);
     else if (key === 'CLEAR') this.query = '';
-    else if (key === 'SPACE') this.query += ' ';
+    else if (key === 'SPACE' || key === ' ') return;  // las patentes no llevan espacios
     else this.query += String(key).toUpperCase();
 
     if (this.query.length > MAX_LENGTH) this.query = this.query.slice(0, MAX_LENGTH);

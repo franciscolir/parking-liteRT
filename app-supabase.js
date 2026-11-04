@@ -1173,7 +1173,6 @@ function onPhysicalKeydown(e) {
 
   if (e.key === 'Backspace') { plateSearch.press('BACKSPACE'); e.preventDefault(); }
   else if (e.key === 'Enter') { plateSearch.flush(); e.preventDefault(); }
-  else if (e.key === ' ') { plateSearch.press('SPACE'); e.preventDefault(); }
   else if (e.key.length === 1) { plateSearch.press(e.key); e.preventDefault(); }
 }
 

@@ -761,11 +761,11 @@ html, body {
   transform: scale(.95);
 }
 
-/* Teclas anchas: borrar, limpiar y espacio.
+/* Teclas anchas: la de borrar ocupa el lugar de la barra de espacio
+   (las patentes no llevan espacios) y "Limpiar" tiene ancho fijo.
    (max-width: none para que no hereden el tope de las teclas normales). */
-.vk-wide { flex: 0 0 62px; max-width: none; font-size: 13px; font-weight: 500; }
+.vk-wide { flex: 1 1 auto; max-width: none; font-size: 13px; font-weight: 500; }
 .vk-clear { flex: 0 0 78px; max-width: none; font-size: 13px; font-weight: 500; }
-.vk-space { flex: 1 1 auto; max-width: none; font-size: 13px; font-weight: 500; }
 
 /* ============================ REGISTER ============================ */
 .form-group { margin-bottom: 14px; }
