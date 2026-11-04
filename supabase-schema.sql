@@ -101,6 +101,12 @@ create policy "Reporter or admin can update plates"
   on public.plates for update
   using (reported_by = auth.uid() or exists (select 1 from public.users where id = auth.uid() and role = 'admin'));
 
+-- Solo el reportador o admin pueden eliminar
+-- (sin esta política el DELETE "funciona" pero borra 0 filas en silencio)
+create policy "Reporter or admin can delete plates"
+  on public.plates for delete
+  using (reported_by = auth.uid() or exists (select 1 from public.users where id = auth.uid() and role = 'admin'));
+
 -- ============================================================
 -- TABLA: scan_history (historial de detecciones)
 -- ============================================================
@@ -306,6 +312,47 @@ $$;
 create trigger trigger_create_default_contacts
   after insert on public.users
   for each row execute function public.create_default_contacts();
+
+-- ============================================================
+-- TABLA: app_settings (configuración global de la app)
+-- (ya existe en producción; este bloque es para instalaciones nuevas)
+--   - session_timeout_minutes: minutos para liberar un nombre
+--   - emergency_contacts: los 5 números por defecto de Llamadas
+-- ============================================================
+create table if not exists public.app_settings (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz default now()
+);
+
+alter table public.app_settings enable row level security;
+
+-- Todos pueden leer (los invitados ven los números de emergencia)
+create policy "Anyone can read app_settings"
+  on public.app_settings for select
+  using (true);
+
+-- Solo los admins pueden escribir
+create policy "Admins can write app_settings"
+  on public.app_settings for all
+  using (exists (select 1 from public.users where id = auth.uid() and role = 'admin'))
+  with check (exists (select 1 from public.users where id = auth.uid() and role = 'admin'));
+
+-- Números de emergencia por defecto (si la clave no existe)
+insert into public.app_settings (key, value, updated_at)
+values (
+  'emergency_contacts',
+  '[
+    {"name":"Carabineros","phone":"133","type":"police","icon":"🚨"},
+    {"name":"Bomberos","phone":"132","type":"fire","icon":"🔥"},
+    {"name":"Ambulancia","phone":"131","type":"emergency","icon":"🚑"},
+    {"name":"Superintendente dpto.","phone":"","type":"office","icon":"🏢"},
+    {"name":"Auxiliar","phone":"","type":"custom","icon":"👮"}
+  ]',
+  now()
+)
+on conflict (key) do nothing;
+
 
 -- ============================================================
 -- VISTA: stats_dashboard (para admin)

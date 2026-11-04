@@ -5,6 +5,7 @@
 
 import { SUPABASE_CONFIG } from './supabase-config.js';
 import { normalizePlate } from './validator.js';
+import { normalizeEmergencyContacts } from './emergency-contacts.js';
 
 // supabase-js viene como script UMD clásico (vendor/supabase.js) y se carga en
 // index.html ANTES del módulo ES, así que globalThis.supabase ya existe acá.
@@ -289,6 +290,36 @@ export async function deleteContact(id) {
     .from('contacts')
     .delete()
     .eq('id', id);
+  if (error) throw error;
+}
+
+// ============================================================
+// HELPERS DE NÚMEROS POR DEFECTO (app_settings → emergency_contacts)
+// ------------------------------------------------------------
+// Los 5 contactos por defecto de la vista Llamadas son globales:
+// el admin los edita una vez y todos los usuarios (y invitados)
+// ven los mismos números. Se guardan como array JSON en la tabla
+// app_settings, que es legible sin sesión y escribible por admin.
+// ============================================================
+
+export async function getEmergencyContacts() {
+  const { data, error } = await supabase
+    .from('app_settings')
+    .select('value')
+    .eq('key', 'emergency_contacts')
+    .maybeSingle();
+  if (error) throw error;
+  return normalizeEmergencyContacts(data?.value);
+}
+
+export async function saveEmergencyContacts(list) {
+  const { error } = await supabase
+    .from('app_settings')
+    .upsert({
+      key: 'emergency_contacts',
+      value: list,
+      updated_at: new Date().toISOString(),
+    });
   if (error) throw error;
 }
 

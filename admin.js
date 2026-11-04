@@ -871,9 +871,21 @@ export class AdminDashboard {
     );
     if (!ok) return;
 
-    const { error } = await supabase.from('plates').delete().eq('id', id);
+    // .select() devuelve las filas borradas: si la política RLS de DELETE
+    // no existe, PostgREST borra 0 filas SIN devolver error (bug original
+    // del botón 🗑️ que fallaba en silencio).
+    const { data: deleted, error } = await supabase
+      .from('plates')
+      .delete()
+      .eq('id', id)
+      .select();
+
     if (error) {
       this.toast('Error: ' + error.message, 'error');
+      return;
+    }
+    if (!deleted || deleted.length === 0) {
+      this.toast('No se pudo eliminar: la base no permitió el borrado (falta la política RLS de DELETE)', 'error');
       return;
     }
 

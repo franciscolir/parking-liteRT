@@ -238,7 +238,17 @@
     <div id="view-call" class="view">
       <div class="view-header"><h1>Marcación Rápida</h1></div>
       <div class="contact-grid" id="contact-grid"></div>
-      <div class="card">
+
+      <!-- Números por defecto (solo admin): globales para todos los usuarios -->
+      <div class="card hidden" id="card-default-contacts">
+        <div class="card-title">Números por defecto</div>
+        <p class="card-hint">Se muestran a todos los usuarios. Los cambios aplican de inmediato.</p>
+        <div id="default-contacts-list"></div>
+        <button class="btn-primary btn-full" id="btn-save-default-contacts">Guardar números</button>
+      </div>
+
+      <!-- Agregar contacto (solo admin) -->
+      <div class="card hidden" id="card-add-contact">
         <div class="card-title">Agregar contacto</div>
         <div class="form-group">
           <label>Nombre</label>
