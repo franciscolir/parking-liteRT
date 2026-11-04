@@ -71,13 +71,84 @@ export function onAuthStateChange(callback) {
 // HELPERS DE PATENTES (plates)
 // ============================================================
 
+// ------------------------------------------------------------
+// SESIÓN FLOTANTE (modo invitado)
+// ------------------------------------------------------------
+// Los flotantes no usan Supabase Auth: su sesión es un nombre de
+// la whitelist + un token uuid (ver guest-auth.js).
+//
+// Para que las patentes y los contactos de emergencia NO sean
+// públicos, el acceso del flotante va por RPCs que validan ese
+// token contra la sesión activa. El admin (Supabase Auth) sigue
+// leyendo las tablas directamente con su sesión.
+let flotanteSession = null;
+
+export function setFlotanteSession(session) {
+  flotanteSession = session && session.session_token ? session : null;
+}
+
+export function getFlotanteSession() {
+  return flotanteSession;
+}
+
+/** ¿Hay un usuario de Supabase Auth (admin)? Solo lee la sesión local. */
+async function haySesionAdmin() {
+  const { data } = await supabase.auth.getSession();
+  return !!data?.session?.user;
+}
+
+/** ¿Estamos en modo flotante? (sesión flotante y sin admin) */
+async function esFlotante() {
+  if (!flotanteSession) return false;
+  return !(await haySesionAdmin());
+}
+
+/**
+ * ¿El error es "esa función no existe"?
+ * Sirve para el despliegue gradual: mientras la migración SQL de
+ * "datos solo con login" no esté aplicada, el flotante cae a la
+ * ruta vieja (lectura directa) en vez de quedarse sin datos.
+ */
+function esErrorDeFuncionInexistente(error) {
+  if (!error) return false;
+  const code = error.code || '';
+  const msg = String(error.message || '').toLowerCase();
+  return code === 'PGRST202' || code === 'PGRST205' || code === '42883'
+    || msg.includes('could not find the function')
+    || msg.includes('does not exist');
+}
+
 export async function lookupPlate(plate) {
-  const { data, error } = await supabase.rpc('lookup_plate', { p_plate: plate.toUpperCase() });
+  const p = plate.toUpperCase();
+
+  if (await esFlotante()) {
+    const { data, error } = await supabase.rpc('flotante_lookup_plate', {
+      p_plate: p,
+      p_name: flotanteSession.name,
+      p_session_token: flotanteSession.session_token,
+    });
+    if (!error) return data?.[0] || null;
+    if (!esErrorDeFuncionInexistente(error)) throw error;
+    // La migración todavía no está aplicada → ruta legacy.
+  }
+
+  const { data, error } = await supabase.rpc('lookup_plate', { p_plate: p });
   if (error) throw error;
   return data?.[0] || null;
 }
 
 export async function getPlates({ type, search, limit = 100, offset = 0 } = {}) {
+  if (await esFlotante()) {
+    const { data, error } = await supabase.rpc('flotante_plates', {
+      p_name: flotanteSession.name,
+      p_session_token: flotanteSession.session_token,
+      p_type: type || null,
+      p_limit: limit,
+    });
+    if (!error) return data || [];
+    if (!esErrorDeFuncionInexistente(error)) throw error;
+  }
+
   let query = supabase
     .from('plates')
     .select('*')
@@ -98,8 +169,10 @@ export async function getPlates({ type, search, limit = 100, offset = 0 } = {}) 
  *
  * Usa `ilike` para coincidencia parcial (ej. "AB" finds "AB123" and
  * "XAB9"), ordena por patente y limita la cantidad de resultados.
- * Solo lee patentes activas (RLS: "Anyone can read active plates"), con la
- * anon key: no hace falta ser admin ni usuario.
+ * Solo lee patentes activas.
+ *
+ * El flotante va por su RPC (valida la sesión); el admin lee la
+ * tabla con su sesión de Supabase.
  *
  * @param {{search?: string, limit?: number}} opts
  * @returns {Promise<Array<{plate:string,type:string,vehicle_type?:string,owner_name?:string}>>}
@@ -108,6 +181,17 @@ export async function searchPlates({ search, limit = 30 } = {}) {
   // Solo letras, números y espacios: sin comodines de SQL ('%', '_').
   const q = String(search || '').toUpperCase().replace(/[^A-Z0-9 ]/g, '').trim();
   if (!q) return [];
+
+  if (await esFlotante()) {
+    const { data, error } = await supabase.rpc('flotante_search_plates', {
+      p_search: q,
+      p_name: flotanteSession.name,
+      p_session_token: flotanteSession.session_token,
+      p_limit: limit,
+    });
+    if (!error) return data || [];
+    if (!esErrorDeFuncionInexistente(error)) throw error;
+  }
 
   const { data, error } = await supabase
     .from('plates')
@@ -303,6 +387,18 @@ export async function deleteContact(id) {
 // ============================================================
 
 export async function getEmergencyContacts() {
+  // El flotante no puede leer app_settings directamente (queda cerrado
+  // a anónimos): usa su RPC, que valida la sesión.
+  if (await esFlotante()) {
+    const { data, error } = await supabase.rpc('flotante_emergency_contacts', {
+      p_name: flotanteSession.name,
+      p_session_token: flotanteSession.session_token,
+    });
+    if (!error) return normalizeEmergencyContacts(data);
+    if (!esErrorDeFuncionInexistente(error)) throw error;
+    // Migración SQL aún no aplicada → sigue la lectura directa.
+  }
+
   const { data, error } = await supabase
     .from('app_settings')
     .select('value')

@@ -14,6 +14,7 @@ import {
   saveScan, getScanHistory, getScanStats,
   getContacts, addContact, updateContact, deleteContact,
   getEmergencyContacts, saveEmergencyContacts,
+  setFlotanteSession,
   getProfile, updateProfile,
   subscribeToPlates, subscribeToScanHistory, subscribeToContacts,
   isAuthenticated, getUserId,
@@ -94,6 +95,7 @@ document.addEventListener('DOMContentLoaded', async function () {
       currentUser = null;
       userProfile = null;
       appMode = 'unknown';
+      setFlotanteSession(null);
       updateAuthUI(false);
       if (!guestSession) {
         navigate('guest-login');
@@ -146,6 +148,9 @@ async function initAuth() {
       currentUser = user;
       userProfile = profile;
       appMode = 'admin';
+      // Si venía una sesión flotante guardada, ya no aplica: el admin
+      // lee los datos con su sesión de Supabase.
+      setFlotanteSession(null);
       await loadUserData();
       updateAuthUI(true);
       await navigate('home');
@@ -162,6 +167,7 @@ async function initAuth() {
     guestSession = guest.session;
     appMode = 'guest';
     setupGuestHeartbeat();
+    restartRefreshPolling();
     // Historial del dispositivo (modo invitado).
     loadLocalHistory();
     // Cache local de patentes (lectura pública con anon key): permite
@@ -193,6 +199,7 @@ async function handleAuthChange(event, session) {
       navAdmin.style.display = prof?.role === 'admin' ? 'flex' : 'none';
     }
     currentUser = session.user;
+    setFlotanteSession(null);
     await loadUserData();
     updateAuthUI(true);
   } else if (event === 'SIGNED_OUT') {
@@ -1221,10 +1228,22 @@ function selectManualPlate(row) {
 // polling mantiene al día el historial y los resultados del buscador.
 
 const REFRESH_POLL_MS = 5 * 60 * 1000;
+const REFRESH_POLL_MS_FLOTANTE = 2 * 60 * 1000;
 
 function startRefreshPolling() {
   if (refreshPollTimer) return;
-  refreshPollTimer = setInterval(() => { refreshData(); }, REFRESH_POLL_MS);
+  // El admin recibe los cambios por Realtime; el flotante no (las
+  // patents ya no son públicas para anónimos), así que refresca más
+  // seguido para que la cache no quede vieja.
+  const intervalo = appMode === 'guest' ? REFRESH_POLL_MS_FLOTANTE : REFRESH_POLL_MS;
+  refreshPollTimer = setInterval(() => { refreshData(); }, intervalo);
+}
+
+/** RePrograma el refresco según el modo actual (admin / flotante). */
+function restartRefreshPolling() {
+  if (refreshPollTimer) clearInterval(refreshPollTimer);
+  refreshPollTimer = null;
+  startRefreshPolling();
 }
 
 async function refreshData() {

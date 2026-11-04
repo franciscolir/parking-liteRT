@@ -10,7 +10,7 @@
  *   - active_sessions (Supabase): valida contra timeout
  */
 
-import { supabase } from './supabase-client.js';
+import { supabase, setFlotanteSession } from './supabase-client.js';
 
 const STORAGE_KEY = 'platedetect_guest_session';
 const HEARTBEAT_MS = 60 * 1000;      // 60s
@@ -36,6 +36,9 @@ export class GuestAuth {
       const valid = await this.touchSession(saved.name, saved.session_token);
       if (valid) {
         this.session = saved;
+        // El cliente (supabase-client) usa esta sesión para leer datos
+        // por RPC: sin ella, el flotante no puede leer nada.
+        setFlotanteSession(saved);
         this.startHeartbeat();
         return { ok: true, session: saved };
       }
@@ -81,6 +84,7 @@ export class GuestAuth {
       started_at: new Date().toISOString(),
     };
     this.saveToStorage(this.session);
+    setFlotanteSession(this.session);
     this.startHeartbeat();
 
     return { ok: true, session: this.session };
@@ -170,6 +174,7 @@ export class GuestAuth {
 
   clearStorage() {
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
+    setFlotanteSession(null);
   }
 
   // ============================================================
