@@ -7,7 +7,9 @@
 //   abre el teclado nativo. Toda la escritura se hace con el teclado
 //   virtual que se arma en esta misma vista.
 // - La búsqueda va contra Supabase con `ilike` (coincidencia parcial),
-//   con debounce de 300 ms para no saturar la base.
+//   con debounce para no saturar la base. La consulta recién arranca
+//   cuando hay MIN_QUERY_LENGTH caracteres (2 o más): con una sola letra
+//   la búsqueda es demasiado amplia y golpea la base al pedo.
 // - No depende del modo cámara: el resultado se entrega por callback
 //   (`onSelect`) para que la app lo procese con el mismo camino que una
 //   detección por cámara (resultado + historial compartido).
@@ -48,6 +50,15 @@ export const DEBOUNCE_MS = 200;
 
 /** Máximo de resultados que se muestran. */
 export const MAX_RESULTS = 30;
+
+/**
+ * Mínimo de caracteres para empezar a buscar.
+ *
+ * Con un solo carácter la búsqueda es demasiado amplia (casi todas las
+ * patentes) y golpea la base sin sentido: la consulta arranca recién
+ * cuando hay 2 caracteres o más.
+ */
+export const MIN_QUERY_LENGTH = 2;
 
 /** Largo máximo de la patente. */
 export const MAX_LENGTH = 10;
@@ -261,6 +272,16 @@ export class PlateSearchView {
       return this.results;
     }
 
+    // Con menos de MIN_QUERY_LENGTH caracteres no se consulta nada:
+    // se espera a que el usuario escriba un poco más.
+    if (q.length < MIN_QUERY_LENGTH) {
+      this.results = [];
+      this.error = null;
+      this._setState('short');
+      this._render();
+      return this.results;
+    }
+
     if (!silent) this._setState('loading');
 
     try {
@@ -285,7 +306,7 @@ export class PlateSearchView {
 
   /** Refresca los resultados de la consulta actual (Realtime / polling). */
   async refresh() {
-    if (!sanitizeQuery(this.query)) return this.results;
+    if (sanitizeQuery(this.query).length < MIN_QUERY_LENGTH) return this.results;
     return this._runSearch({ silent: true });
   }
 
@@ -314,6 +335,7 @@ export class PlateSearchView {
     const messages = {
       idle: '',
       loading: 'Buscando…',
+      short: `Escriba al menos ${MIN_QUERY_LENGTH} caracteres.`,
       empty: 'Sin resultados para esa patente.',
       error: 'Error al buscar: ' + (this.error || 'intentá de nuevo'),
       results: this.results.length === 1

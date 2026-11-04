@@ -270,6 +270,18 @@
         </div>
         <button class="btn-primary btn-full" id="btn-add-contact">Agregar contacto</button>
       </div>
+
+      <!-- Enviar registros por WhatsApp (solo admin) -->
+      <div class="card hidden" id="card-whatsapp-report">
+        <div class="card-title">Enviar registros por WhatsApp</div>
+        <p class="card-hint" id="whatsapp-report-hint">Envía el reporte del incidente al número que indiques.</p>
+        <div class="form-group">
+          <label>Número de destino</label>
+          <input type="tel" id="whatsapp-report-phone" placeholder="Ej: +56 9 8765 4321"
+                 inputmode="tel" autocomplete="off">
+        </div>
+        <button class="btn-whatsapp btn-full" id="btn-whatsapp-report">Enviar por WhatsApp</button>
+      </div>
       <div style="height:16px"></div>
     </div>
 
