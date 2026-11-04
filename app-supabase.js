@@ -3,7 +3,14 @@ import { Camera } from './camera.js';
 import { PlateDetector } from './detector.js';
 import { PlateOCR } from './ocr.js';
 import { validatePlate, normalizePlate } from './validator.js';
-import { TYPE_LABELS, getScanStatus } from './plate-types.js';
+import {
+  TYPE_LABELS,
+  getScanStatus,
+  getTypeClass,
+  getFrameColor,
+  isValidPlateType,
+  CONFIRM_FLASH_MS,
+} from './plate-types.js';
 import { PlateSearchView } from './plate-search-view.js';
 import { Corrector } from './corrector.js';
 import { AdminDashboard } from './admin.js';
@@ -35,6 +42,9 @@ let running = false;
 let rafId = null;
 let lastPlate = null;
 let lastPlateBox = null;
+let lastPlateType = null;      // tipo de la última patente confirmada
+let plateConfirmUntil = 0;     // hasta cuándo el frame parpadea en verde
+let lastConfirmed = null;      // clave (patente|tipo) ya confirmada: parpadea 1 vez
 let noDetectFrames = 0;
 let frameCount = 0;
 let lastFpsTime = performance.now();
@@ -1010,11 +1020,25 @@ async function startCamera() {
 
 function setStatus(msg) { const el = document.getElementById('cam-status'); if (el) el.textContent = msg; }
 
+/**
+ * Olvida la patente actual: se usa cuando la patente sale del cuadro
+ * (o se para la cámara). Se limpian también el tipo y el destello
+ * verde de confirmación, para que la próxima patente confirmada
+ * vuelva a parpadear.
+ */
+function resetPlateTracking() {
+  lastPlate = null;
+  lastPlateBox = null;
+  lastPlateType = null;
+  plateConfirmUntil = 0;
+  lastConfirmed = null;
+}
+
 function stopCamera() {
   running = false;
   if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
   if (camera) { camera.stop(); camera = null; }
-  lastPlate = null; lastPlateBox = null; noDetectFrames = 0;
+  resetPlateTracking(); noDetectFrames = 0;
   streakCandidate = null; streakCount = 0; ocrCounter = 0; lastBoxCenter = null;
   if (detector) detector._smoothBox = null;
   document.getElementById('scan-toggle').checked = false;
@@ -1033,7 +1057,7 @@ window.toggleScan = async function () {
   document.getElementById('cam-status').classList.add('scanning');
   document.getElementById('cam-container').classList.add('scanning');
   setStatus('Escaneando...');
-  lastPlate = null; noDetectFrames = 0;
+  resetPlateTracking(); noDetectFrames = 0;
   if (detector) detector._smoothBox = null;
   requestAnimationFrame(loop);
 };
@@ -1116,7 +1140,7 @@ async function loop() {
     noDetectFrames++;
     streakCandidate = null; streakCount = 0;
     if (noDetectFrames > noDetectLimit && lastPlate) {
-      lastPlate = null; lastPlateBox = null;
+      resetPlateTracking();
     }
   }
 
@@ -1356,25 +1380,35 @@ function countScan(type) {
   else scanCount.unknown = (scanCount.unknown || 0) + 1;
 }
 
-/** Texto, clase CSS e ícono para un tipo de patente. */
+/**
+ * Texto, clase CSS e ícono para un tipo de patente.
+ *
+ * La clase de color sale de plate-types.js (fuente única):
+ *   NE → .ne (verde) · AD → .ad (azul) · PA → .pa (rojo)
+ */
 function plateStatusInfo(type) {
   if (type === 'first_aid') {
-    return { st: '🚑 PRIMEROS AUXILIOS', css: 'danger', ico: '🚑' };
+    return { st: '🚑 PRIMEROS AUXILIOS', css: getTypeClass('first_aid'), ico: '🚑' };
   } else if (type === 'administration') {
-    return { st: '🏢 ADMINISTRACIÓN', css: 'success', ico: '🏢' };
+    return { st: '🏢 ADMINISTRACIÓN', css: getTypeClass('administration'), ico: '🏢' };
   } else if (type === 'special_needs') {
-    // Registrada: se muestra en verde (como el resto de las registradas).
-    // El tipo se distingue por el ícono ♿ y por el texto.
-    return { st: '♿ NECESIDADES ESPECIALES', css: 'success', ico: '♿' };
+    return { st: '♿ NECESIDADES ESPECIALES', css: getTypeClass('special_needs'), ico: '♿' };
   } else {
     return { st: '⚠ NO REGISTRADO', css: 'warning', ico: '🔴' };
   }
 }
 
-/** Pinta el resultado de la patente detectada. */
+/**
+ * Pinta el resultado de la patente detectada.
+ *
+ * Si la patente está REGISTRADA (tipo válido) el frame parpadea en
+ * VERDE una sola vez (CONFIRM_FLASH_MS) para confirmar el registro y
+ * después queda con el color de su tipo (NE verde / AD azul / PA rojo).
+ * El parpadeo no se repite en cada redetección de la misma patente.
+ */
 function renderPlateResult(plate, type) {
   const result = document.getElementById('cam-result');
-  result.classList.remove('hidden', 'success', 'danger', 'warning');
+  result.classList.remove('hidden', 'success', 'danger', 'warning', 'ne', 'ad', 'pa');
   document.getElementById('result-plate').textContent = plate;
 
   const { st, css, ico } = plateStatusInfo(type);
@@ -1383,8 +1417,26 @@ function renderPlateResult(plate, type) {
   document.getElementById('result-icon').textContent = ico;
   document.getElementById('result-status').textContent = st;
 
+  const registrado = isValidPlateType(type);
   const inner = result.querySelector('.result-card-inner');
-  if (inner) { inner.classList.remove('flash'); void inner.offsetWidth; inner.classList.add('flash'); }
+  if (inner) {
+    inner.classList.remove('flash', 'flash-confirm');
+    void inner.offsetWidth;
+    inner.classList.add('flash');
+
+    // Verde de confirmación: una sola vez por patente/tipo nuevo.
+    if (registrado) {
+      const key = plate + '|' + type;
+      if (lastConfirmed !== key) {
+        lastConfirmed = key;
+        plateConfirmUntil = Date.now() + CONFIRM_FLASH_MS;
+        inner.classList.add('flash-confirm');
+      }
+    }
+  }
+
+  // El frame del canvas usa el color del tipo (o verde al confirmar).
+  lastPlateType = registrado ? type : null;
 
   updateHistory();
   if (navigator.vibrate) navigator.vibrate(100);
@@ -1807,10 +1859,12 @@ function drawCanvasOverlay(boxes) {
     const iw = d.x2 - d.x1;
     const ih = d.y2 - d.y1;
     if (iw < 2 || ih < 2) continue;
-    ctx.strokeStyle = d.score > 0.5 ? '#00ff66' : '#ffcc00';
+    // El cuadro de DETECCIÓN va en neutro: el color lo lleva el frame
+    // de la patente confirmada (verde al parpadear, luego el del tipo).
+    ctx.strokeStyle = d.score > 0.5 ? 'rgba(255,255,255,.55)' : '#ffcc00';
     ctx.lineWidth = 3;
     ctx.strokeRect(d.x1, d.y1, iw, ih);
-    ctx.fillStyle = d.score > 0.5 ? '#00ff66' : '#ffcc00';
+    ctx.fillStyle = d.score > 0.5 ? 'rgba(255,255,255,.75)' : '#ffcc00';
     ctx.font = 'bold 13px monospace';
     ctx.fillText((d.score * 100).toFixed(0) + '%', d.x1, d.y1 - 5);
   }
@@ -1818,7 +1872,11 @@ function drawCanvasOverlay(boxes) {
   if (lastPlate && lastPlateBox) {
     const box = lastPlateBox;
     const iw = box.x2 - box.x1, ih = box.y2 - box.y1;
-    ctx.strokeStyle = '#00ff66';
+    // Verde de confirmación (parpadea una vez) y después el color del
+    // tipo de la patente: NE verde · AD azul · PA rojo.
+    const confirmando = Date.now() < plateConfirmUntil;
+    const frameColor = getFrameColor(lastPlateType, confirmando);
+    ctx.strokeStyle = frameColor;
     ctx.lineWidth = 4;
     ctx.strokeRect(box.x1, box.y1, iw, ih);
 
@@ -1829,7 +1887,7 @@ function drawCanvasOverlay(boxes) {
     const ly = Math.max(4, box.y1 - 34);
     ctx.fillStyle = 'rgba(0,0,0,0.8)';
     ctx.fillRect(lx, ly, tw + 16, 30);
-    ctx.fillStyle = '#00ff66';
+    ctx.fillStyle = frameColor;
     ctx.fillText(display, lx + 8, ly + 22);
   }
 

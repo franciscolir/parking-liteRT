@@ -11,26 +11,70 @@
 /**
  * Los 3 tipos de patente válidos, con su etiqueta y clase de color.
  *
- * `cls`      → color del CONTADOR por tipo (mini cards NE/AD/PA): cada
- *              tipo tiene su color para distinguirlos de un vistazo.
- * `stateCls` → color de los BADGES: ahí el color indica el ESTADO de la
- *              patente (verde = registrada, rojo = primeros auxilios),
- *              no el tipo. El tipo se lee en la etiqueta de texto.
+ * COLOR POR TIPO (fuente única de verdad):
+ *   - Necesidades especiales (NE) → VERDE
+ *   - Administración (AD)           → AZUL
+ *   - Primeros auxilios (PA)        → ROJO
+ *
+ * El mismo color se usa en todos lados: la píldora de tipo en la
+ * lista de patentes, el historial, las métricas (mini cards NE/AD/PA),
+ * la tarjeta de resultado de la cámara y el frame del canvas.
+ *
+ * `cls`      → clase CSS del color del tipo (píldoras, badges, mini cards).
+ * `stateCls` → alias de `cls` (antes el badge usaba el color del ESTADO).
+ * `color`    → color en hex (para dibujar el frame en el canvas).
  */
 export const PLATE_TYPES = [
-  { value: 'special_needs', label: 'Necesidades especiales', abbr: 'NE', cls: 'warn', stateCls: 'reg' },
-  { value: 'administration', label: 'Administración', abbr: 'AD', cls: 'reg', stateCls: 'reg' },
-  { value: 'first_aid', label: 'Primeros auxilios', abbr: 'PA', cls: 'stolen', stateCls: 'stolen' },
+  { value: 'special_needs', label: 'Necesidades especiales', abbr: 'NE', cls: 'ne', stateCls: 'ne', color: '#22c55e' },
+  { value: 'administration', label: 'Administración', abbr: 'AD', cls: 'ad', stateCls: 'ad', color: '#3b82f6' },
+  { value: 'first_aid', label: 'Primeros auxilios', abbr: 'PA', cls: 'pa', stateCls: 'pa', color: '#ef4444' },
 ];
 
 /** Solo los valores válidos: ['special_needs', 'administration', 'first_aid'] */
 export const PLATE_TYPE_VALUES = PLATE_TYPES.map(t => t.value);
 
-/** Mapa { valor: { label, cls } } para pintar badges. */
+/** Mapa { valor: { label, cls, color } } para pintar badges. */
 export const TYPE_LABELS = PLATE_TYPES.reduce((acc, t) => {
-  acc[t.value] = { label: t.label, cls: t.stateCls };
+  acc[t.value] = { label: t.label, cls: t.stateCls, color: t.color };
   return acc;
 }, {});
+
+/** Colores hex por tipo (para el frame del canvas de la cámara). */
+export const PLATE_TYPE_COLORS = PLATE_TYPES.reduce((acc, t) => {
+  acc[t.value] = t.color;
+  return acc;
+}, {});
+
+/** Verde de confirmación: parpadea una vez cuando la patente está registrada. */
+export const CONFIRM_FLASH_COLOR = '#00ff66';
+
+/** Duración del parpadeo de confirmación (ms). */
+export const CONFIRM_FLASH_MS = 500;
+
+/** Color de una patente sin tipo / no registrada. */
+export const UNKNOWN_PLATE_COLOR = '#ffcc00';
+
+/** Color hex de un tipo de patente (null si no es un tipo válido). */
+export function getTypeColor(type) {
+  return PLATE_TYPE_COLORS[type] || null;
+}
+
+/** Clase CSS del color de un tipo de patente. */
+export function getTypeClass(type) {
+  return TYPE_LABELS[type]?.cls || 'unk';
+}
+
+/**
+ * Color del frame de la patente en la cámara:
+ *   - verde de confirmación mientras parpadea (una sola vez) al
+ *     confirmar que la patente está registrada;
+ *   - después, el color del tipo (NE verde / AD azul / PA rojo);
+ *   - si no se sabe el tipo, ámbar de "no registrado".
+ */
+export function getFrameColor(type, confirmando = false) {
+  if (confirmando) return CONFIRM_FLASH_COLOR;
+  return PLATE_TYPE_COLORS[type] || UNKNOWN_PLATE_COLOR;
+}
 
 /** Texto mostrado cuando el tipo no se pudo determinar. */
 export const REVIEW_LABEL = 'Revisión necesaria';
