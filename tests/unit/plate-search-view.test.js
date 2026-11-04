@@ -107,7 +107,7 @@ describe('plate-search-view.js', () => {
       expect(KEYBOARD_ROWS[2]).not.toContain('L');
     });
 
-    it('los botones de Limpiar y Borrar van a los costados, en vertical', () => {
+    it('los botones de Limpiar y Borrar van apilados en la columna izquierda', () => {
       const dom = mountDom();
       const view = new PlateSearchView({ searchFn: vi.fn() });
       view.init(dom);
@@ -117,11 +117,16 @@ describe('plate-search-view.js', () => {
       expect(laterales[0].dataset.key).toBe('CLEAR');
       expect(laterales[1].dataset.key).toBe('BACKSPACE');
 
-      // Los laterales están al rededor del bloque de letras (no en una fila).
+      // Los dos están en la misma columna, uno arriba del otro.
+      const col = dom.querySelector('#manual-keyboard .vk-side-col');
+      expect(col.children.length).toBe(2);
+      expect(col.children[0].dataset.key).toBe('CLEAR');
+      expect(col.children[1].dataset.key).toBe('BACKSPACE');
+
+      // La columna va a la izquierda y las letras al lado derecho.
       const block = dom.querySelector('#manual-keyboard .vk-block');
-      expect(block.children.length).toBe(3);  // limpiar + letras + borrar
-      expect(block.firstElementChild.dataset.key).toBe('CLEAR');
-      expect(block.lastElementChild.dataset.key).toBe('BACKSPACE');
+      expect(block.children.length).toBe(2);
+      expect(block.children[0].classList.contains('vk-side-col')).toBe(true);
       expect(block.children[1].classList.contains('vk-letters')).toBe(true);
 
       // El bloque de letras tiene las 3 filas de consonantes.

@@ -738,14 +738,20 @@ html, body {
 }
 .vk-row:last-child { margin-bottom: 0; }
 
-/* Bloque de letras: los botones de los costados (Limpiar / Borrar) son
-   verticales y ocupan la altura de las 3 filas de letras. Aprovechan el
-   espacio que sobraba a izquierda y derecha y ahorran una fila completa
-   (el teclado queda más bajo). */
+/* Bloque de letras: a la izquierda va una columna con los dos botones
+   verticales (Limpiar arriba, Borrar abajo) del ancho de una tecla. Así
+   las 3 filas de letras usan todo el ancho lateral libre. */
 .vk-block {
   display: flex;
   gap: 5px;
   margin-top: 5px;
+}
+
+.vk-side-col {
+  flex: 0 0 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .vk-letters {
@@ -759,7 +765,8 @@ html, body {
 .vk-key {
   flex: 1 1 0;
   min-width: 0;
-  max-width: 46px;
+  /* Con los botones a un solo lado las letras pueden ser más anchas. */
+  max-width: 52px;
   padding: 12px 2px;
   background: var(--card);
   border: 1px solid rgba(255, 255, 255, .06);
@@ -778,10 +785,11 @@ html, body {
   transform: scale(.95);
 }
 
-/* Botón lateral vertical (Limpiar / Borrar): ocupa toda la altura de las
-   3 filas de letras. El texto se escribe de lado, de arriba hacia abajo. */
+/* Botones laterales (Limpiar / Borrar): son una columna del ancho de una
+   tecla. El texto se escribe de lado, de arriba hacia abajo. */
 .vk-side {
-  flex: 0 0 44px;
+  flex: 1 1 0;
+  width: 100%;
   max-width: none;
   padding: 8px 2px;
   display: flex;
@@ -793,8 +801,12 @@ html, body {
   letter-spacing: .5px;
 }
 
-/* El ícono de borrar se deja derecho (no-rotado). */
+/* "Limpiar" ocupa 2 de las 3 filas de letras. */
+.vk-side-tall { flex: 2 1 0; }
+
+/* El ícono de borrar queda derecho (no rotado) y toma la fila de abajo. */
 .vk-side-icon {
+  flex: 1 1 0;
   writing-mode: horizontal-tb;
   font-size: 20px;
 }

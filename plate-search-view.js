@@ -152,14 +152,18 @@ export class PlateSearchView {
     // Fila 0: los números ocupan todo el ancho.
     this.keyboardEl.appendChild(this._buildRow(KEYBOARD_ROWS[0]));
 
-    // Bloque de letras: los 3 filas de consonantes al centro y, a los
-    // lados, los botones verticales de Limpiar y Borrar. Así se aprovecha
-    // el espacio que sobraba a izquierda y derecha (las filas de letras
-    // son más angostas que la de números) y el teclado queda más bajo.
+    // Bloque de letras: los 3 filas de consonantes y, a la izquierda, los
+    // botones verticales de Limpiar y Borrar (uno arriba del otro).
+    // Van juntos en una sola columna del ancho de una tecla: así las
+    // letras usan todo el ancho lateral que queda libre.
     const block = document.createElement('div');
     block.className = 'vk-block';
 
-    block.appendChild(this._buildSideKey('CLEAR'));
+    const side = document.createElement('div');
+    side.className = 'vk-side-col';
+    side.appendChild(this._buildSideKey('CLEAR', 'vk-side-tall'));
+    side.appendChild(this._buildSideKey('BACKSPACE', 'vk-side-icon'));
+    block.appendChild(side);
 
     const letters = document.createElement('div');
     letters.className = 'vk-letters';
@@ -167,8 +171,6 @@ export class PlateSearchView {
       letters.appendChild(this._buildRow(row));
     }
     block.appendChild(letters);
-
-    block.appendChild(this._buildSideKey('BACKSPACE'));
 
     this.keyboardEl.appendChild(block);
   }
@@ -197,15 +199,14 @@ export class PlateSearchView {
   }
 
   /**
-   * Crea un botón lateral vertical (ocupa la altura de las 3 filas de
-   * letras). El de "Limpiar" escribe el texto de lado; el de "Borrar"
-   * deja el ícono ⌫ derecho.
+   * Crea un botón lateral vertical. Los dos van apilados en la columna
+   * izquierda: "Limpiar" (texto de lado) arriba y "Borrar" (ícono ⌫)
+   * abajo.
    */
-  _buildSideKey(key) {
+  _buildSideKey(key, extraClass = '') {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'vk-key vk-side';
-    if (key === 'BACKSPACE') btn.classList.add('vk-side-icon');
+    btn.className = 'vk-key vk-side ' + extraClass;
     btn.textContent = KEY_LABELS[key] || key;
     btn.dataset.key = key;
     btn.setAttribute('aria-label', key === 'BACKSPACE' ? 'Borrar el último carácter' : 'Limpiar la patente');
