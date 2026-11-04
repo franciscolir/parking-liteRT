@@ -42,3 +42,31 @@ values (
   now()
 )
 on conflict (key) do nothing;
+
+-- ------------------------------------------------------------
+-- 3) Cerrar RPCs a anónimos (auditoría 2026-11-04, sin sesión):
+--    - increment_scan_stat: cualquier anónimo podía ejecutarla
+--      (fallaba solo por FK). Con un UUID obtenible de
+--      plates.reported_by podía alterar los contadores de
+--      escaneos de cualquier usuario.
+--    - get_admin_stats: el anónimo podía llamarla (devolvía null,
+--      sin fuga de datos, pero sin ninguna guarda).
+--    El admin (rol authenticated) sigue usándolas normalmente.
+--    No tocar: lookup_plate, validate_and_start_session,
+--    touch_session, end_session (las usa el modo flotante).
+-- ------------------------------------------------------------
+do $$
+declare f record;
+begin
+  for f in
+    select p.oid::regprocedure as sig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname in ('increment_scan_stat', 'get_admin_stats')
+  loop
+    execute format('revoke execute on function %s from public, anon', f.sig);
+    execute format('grant execute on function %s to authenticated', f.sig);
+    raise notice 'Ejecución restringida a autenticados: %', f.sig;
+  end loop;
+end $$;
