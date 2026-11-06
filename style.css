@@ -2636,9 +2636,15 @@ body.is-guest-login #install-banner { display: none !important; }
   flex-shrink: 0;
 }
 
+/* Fila en UNA sola línea: [luz] [estado] [nombre] [control] [⋯] */
 .pill-row {
   flex-wrap: wrap;
-  row-gap: 8px;
+  gap: 8px;
+}
+
+.pill-row > .btn-small,
+.pill-row > .pill-check {
+  flex-shrink: 0;
 }
 
 .pill-row.pill-inactive {
@@ -2667,15 +2673,10 @@ body.is-guest-login #install-banner { display: none !important; }
   box-shadow: 0 0 0 4px rgba(34, 197, 94, .18);
 }
 
-.pill {
+/* El nombre ocupa el centro de la fila y se corta si es largo */
+.pill-name {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.pill-name {
   font-size: 14px;
   font-weight: 700;
   text-transform: uppercase;
@@ -2685,7 +2686,7 @@ body.is-guest-login #install-banner { display: none !important; }
 }
 
 .pill-badge {
-  align-self: flex-start;
+  flex-shrink: 0;
   font-size: 10px;
   font-weight: 700;
   padding: 2px 8px;
@@ -2698,11 +2699,6 @@ body.is-guest-login #install-banner { display: none !important; }
 
 .pill-badge.on { background: rgba(34, 197, 94, .18); color: #22c55e; }
 .pill-badge.off { background: rgba(239, 68, 68, .15); color: var(--danger); }
-
-.pill-meta {
-  font-size: 10px;
-  color: var(--text-muted);
-}
 
 .pill-actions {
   flex-basis: 100%;

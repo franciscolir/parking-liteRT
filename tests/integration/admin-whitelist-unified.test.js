@@ -5,10 +5,11 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 // ------------------------------------------------------------
 // Verifica los cambios del panel admin:
 //   - UNA sola lista (sesiones + whitelist) con píldoras:
-//       · en uso   → círculo verde + botón "Salir"
+//       · en uso   → círculo verde + botón "Desactivar" (baja + cierra sesión)
 //       · libre    → checkbox (activo ⇒ puede loguearse)
 //       · inactivo → píldora apagada + checkbox sin marcar
 //       · ⋯ por fila → Editar / Borrar
+//   - La fila va en UNA línea: [luz] [estado] [nombre] [control] [⋯]
 //   - Checkbox de encabezado "Activar todos"
 //   - Botón Ajustes → modal de tiempo de logout (sin input inline)
 //   - Alta masiva: varios nombres separados por un espacio
@@ -101,15 +102,48 @@ describe('Admin - lista unificada de flotantes', () => {
     expect(rows[0].querySelector('.pill-name').textContent).toBe('GUARDIA 1');
   });
 
-  it('en uso → círculo verde + botón Salir (en vez de checkbox)', async () => {
+  it('en uso → círculo verde + botón Desactivar (en vez de checkbox)', async () => {
     const dashboard = montarAdmin();
     await dashboard.loadWhitelist();
 
     const row = document.querySelector('#admin-whitelist-list .pill-row');
     expect(row.querySelector('.pill-dot').classList.contains('on')).toBe(true);
-    expect(row.querySelector('[data-action="force-logout"]').textContent).toContain('Salir');
+    expect(row.querySelector('[data-action="deactivate-use"]').textContent).toContain('Desactivar');
     expect(row.querySelector('[data-action="toggle-active"]')).toBeNull();
     expect(row.querySelector('.pill-badge').textContent).toBe('EN USO');
+  });
+
+  it('la fila queda en UNA línea: [luz] [estado] [nombre] [control] [⋯]', async () => {
+    const dashboard = montarAdmin();
+    await dashboard.loadWhitelist();
+
+    const row = document.querySelector('#admin-whitelist-list .pill-row');
+    const orden = [...row.children]
+      .filter(el => !el.classList.contains('pill-actions'))
+      .map(el => el.className.split(' ')[0]);
+    expect(orden).toEqual(['pill-dot', 'pill-badge', 'pill-name', 'btn-small', 'admin-card-actions']);
+  });
+
+  it('Desactivar pone el nombre en inactivo Y cierra su sesión', async () => {
+    const dashboard = montarAdmin();
+    await dashboard.loadWhitelist();
+
+    document.querySelector('[data-action="deactivate-use"]').click();
+    await new Promise(r => setTimeout(r, 0));
+
+    // Pide confirmación antes de actuar
+    const modal = document.getElementById('admin-confirm-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('admin-confirm-message').textContent).toContain('GUARDIA 1');
+
+    document.getElementById('admin-confirm-ok').click();
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(mockRpc).toHaveBeenCalledWith(
+      'set_whitelist_active',
+      expect.objectContaining({ p_id: '11111111-1111-1111-1111-111111111111', p_active: false }),
+    );
+    expect(mockRpc).toHaveBeenCalledWith('force_logout', { p_name: 'GUARDIA 1' });
   });
 
   it('inactivo → píldora apagada y checkbox sin marcar', async () => {

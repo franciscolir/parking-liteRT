@@ -83,7 +83,8 @@ export class AdminDashboard {
       return;
     }
 
-    // Una sola lista: cada fila es una píldora con su estado.
+    // Una sola lista: cada fila queda en UNA sola línea, ordenada
+    // de derecha a izquierda: [luz + estado] [NOMBRE] [control] [⋯]
     list.innerHTML = this.whitelistCache.map(w => {
       const inUse = !!w.session;
       const name = String(w.allowed_name);
@@ -92,21 +93,22 @@ export class AdminDashboard {
       const diffMin = (inUse && w.session.last_activity)
         ? Math.max(0, Math.round((Date.now() - new Date(w.session.last_activity).getTime()) / 60000))
         : null;
-      // En uso ⇒ botón "Salir"; libre ⇒ checkbox que activa el login.
+      const dotTitle = inUse
+        ? (diffMin !== null ? `En uso · activo hace ${diffMin} min` : 'En uso')
+        : (w.isActive ? 'Libre' : 'Inactivo');
+      // En uso ⇒ botón "Desactivar" (baja el nombre y cierra su sesión);
+      // libre/inactivo ⇒ checkbox que activa el login.
       const checkControl = inUse
-        ? `<button class="btn-small btn-danger btn-logout" data-action="force-logout" data-name="${this.escapeHtml(name)}" title="Cerrar sesión de ${this.escapeHtml(name)}">Salir</button>`
+        ? `<button class="btn-small btn-danger" data-action="deactivate-use" data-id="${w.id}" data-name="${this.escapeHtml(name)}" title="Desactivar ${this.escapeHtml(name)} y cerrar su sesión">Desactivar</button>`
         : `<label class="pill-check" title="Activar / desactivar">
              <input type="checkbox" data-action="toggle-active" data-id="${w.id}" ${w.isActive ? 'checked' : ''}>
            </label>`;
       return `
         <div class="admin-card pill-row ${w.isActive ? '' : 'pill-inactive'}" data-id="${w.id}" data-name="${this.escapeHtml(name)}">
+          <span class="pill-dot ${inUse ? 'on' : ''}" title="${dotTitle}"></span>
+          <span class="pill-badge ${badgeCls}">${badge}</span>
+          <span class="pill-name">${this.escapeHtml(name)}</span>
           ${checkControl}
-          <span class="pill-dot ${inUse ? 'on' : ''}" title="${inUse ? 'En uso' : 'Libre'}"></span>
-          <div class="pill">
-            <span class="pill-name">${this.escapeHtml(name)}</span>
-            <span class="pill-badge ${badgeCls}">${badge}</span>
-            <span class="pill-meta">${diffMin !== null ? `Activo hace ${diffMin} min` : ''}</span>
-          </div>
           <div class="admin-card-actions">
             <button class="btn-small btn-secondary" data-action="row-menu" title="Acciones">⋯</button>
           </div>
@@ -330,6 +332,42 @@ export class AdminDashboard {
     this.toast('Sesión cerrada', 'success');
     await this.loadWhitelist();
   }
+
+  /** Botón "Desactivar" (fila en uso): baja el nombre Y cierra su sesión. */
+  async deactivateUse(id, name) {
+    const ok = await this.confirm(
+      'Desactivar',
+      `¿Desactivar "${name}" y cerrar su sesión?`
+    );
+    if (!ok) return;
+
+    // 1) Poner el nombre en inactivo (no podrá iniciar sesión)
+    let { data, error } = await supabase.rpc('set_whitelist_active', { p_id: id, p_active: false });
+    if (!error && data?.ok === false) error = { message: data.error || 'No se pudo actualizar' };
+    if (error) {
+      const res = await supabase
+        .from('name_whitelist')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      error = res.error;
+    }
+    if (error) {
+      this.toast('Error: ' + error.message, 'error');
+      await this.loadWhitelist();
+      return;
+    }
+
+    // 2) Cerrar la sesión activa de ese nombre
+    const { error: errLogout } = await supabase.rpc('force_logout', { p_name: name });
+    if (errLogout) {
+      this.toast('Nombre desactivado, pero no se pudo cerrar la sesión', 'error');
+      await this.loadWhitelist();
+      return;
+    }
+
+    this.toast('Nombre desactivado y sesión cerrada', 'success');
+    await this.loadWhitelist();
+  }
   // ============================================================
   // INICIALIZACIÓN
   // ============================================================
@@ -424,8 +462,8 @@ export class AdminDashboard {
       <!-- ============ TAB: USUARIOS (registrados + flotantes) ============ -->
       <div class="admin-tab-content" id="admin-tab-users">
         <div class="admin-subtabs">
-          <button class="admin-subtab active" data-subtab="users-registered">📋 Registrados</button>
-          <button class="admin-subtab" data-subtab="users-floating">👥 Flotantes</button>
+          <button class="admin-subtab active" data-subtab="users-registered">Registrados</button>
+          <button class="admin-subtab" data-subtab="users-floating">Flotantes</button>
         </div>
 
         <!-- Sub-vista: usuarios registrados (con cuenta) -->
@@ -447,9 +485,6 @@ export class AdminDashboard {
             </label>
             <button class="btn-primary btn-small" id="admin-add-access">+ Agregar</button>
             <button class="btn-secondary btn-small" id="admin-settings-btn">⚙️ Ajustes</button>
-          </div>
-          <div class="admin-section-header">
-            <h3>🔐 Usuarios flotantes</h3>
           </div>
           <div id="admin-whitelist-list" class="admin-list"></div>
         </div>
@@ -1606,6 +1641,8 @@ export class AdminDashboard {
 
       if (action === 'force-logout') {
         await this.forceLogout(btn.dataset.name);
+      } else if (action === 'deactivate-use') {
+        await this.deactivateUse(btn.dataset.id, btn.dataset.name);
       } else if (action === 'remove-access') {
         await this.removeAccess(btn.dataset.id, btn.dataset.name);
       } else if (action === 'toggle-active') {
