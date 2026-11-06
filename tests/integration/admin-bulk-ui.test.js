@@ -179,14 +179,21 @@ describe('Admin - Ingreso masivo por texto (UI)', () => {
   it('el tab Usuarios alterna entre registrados y flotantes con las sub-tabs', () => {
     montarAdmin();
 
-    // Solo 4 tabs: Home, Usuarios, Patentes, Escaneos
-    expect(document.querySelectorAll('.admin-tab')).toHaveLength(4);
+    // Solo 3 tabs: Home, Usuarios, Patentes (Escaneos se eliminó:
+    // esa info vive en Home)
+    expect(document.querySelectorAll('.admin-tab')).toHaveLength(3);
 
-    // Registrados activo por defecto; Flotantes contiene los accesos
+    // Registrados activo por defecto; Flotantes contiene la lista
+    // unificada (sesiones + whitelist) con su toolbar
     expect(document.getElementById('admin-subtab-users-registered').classList.contains('active')).toBe(true);
     expect(document.getElementById('admin-subtab-users-floating').classList.contains('active')).toBe(false);
     expect(document.getElementById('admin-whitelist-list')).toBeTruthy();
-    expect(document.getElementById('admin-floating-sessions')).toBeTruthy();
+    expect(document.getElementById('admin-check-all')).toBeTruthy();
+    expect(document.getElementById('admin-add-access')).toBeTruthy();
+    expect(document.getElementById('admin-settings-btn')).toBeTruthy();
+    // No hay lista de sesiones separada: todo vive en la lista unificada
+    expect(document.getElementById('admin-floating-sessions')).toBeNull();
+    expect(document.getElementById('admin-sessions-list')).toBeNull();
 
     document.querySelector('.admin-subtab[data-subtab="users-floating"]').click();
     expect(document.getElementById('admin-subtab-users-floating').classList.contains('active')).toBe(true);

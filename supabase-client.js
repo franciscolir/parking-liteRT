@@ -419,6 +419,64 @@ export async function saveEmergencyContacts(list) {
   if (error) throw error;
 }
 
+// ============================================================
+// NÚMERO DESTINO DE REPORTES (app_settings → office_phone)
+// ------------------------------------------------------------
+// El campo de la vista Llamadas ALMACENA el número destino tipo
+// 'office': es global (app_settings) y lo usan los reportes de
+// incidente que manda `sendWhatsAppReport()`. El admin lo edita una
+// vez y todos los equipos ven lo mismo.
+// ============================================================
+
+/** Normaliza el valor leído de app_settings a un string de teléfono. */
+export function normalizeOfficePhone(value) {
+  if (typeof value === 'string') return value.trim();
+  if (value == null) return '';
+  return String(value).trim();
+}
+
+/** Lee el número destino. Sin sesión flotante ni permiso → ''. */
+export async function getOfficePhone() {
+  // El flotante no puede leer app_settings (queda cerrado a anónimos):
+  // usa su RPC, que valida el token de sesión.
+  if (await esFlotante()) {
+    const { data, error } = await supabase.rpc('flotante_office_phone', {
+      p_name: flotanteSession.name,
+      p_session_token: flotanteSession.session_token,
+    });
+    if (!error) return normalizeOfficePhone(data);
+    if (!esErrorDeFuncionInexistente(error)) throw error;
+    // Migración SQL aún no aplicada → sigue la lectura directa.
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'office_phone')
+      .maybeSingle();
+    if (error) throw error;
+    return normalizeOfficePhone(data?.value);
+  } catch {
+    // Sin permiso de lectura (anónimo): el reporte cae al contacto 'office'.
+    return '';
+  }
+}
+
+/** Guarda el número destino (solo admin: RLS de app_settings). */
+export async function saveOfficePhone(value) {
+  const phone = normalizeOfficePhone(value);
+  const { error } = await supabase
+    .from('app_settings')
+    .upsert({
+      key: 'office_phone',
+      value: phone,
+      updated_at: new Date().toISOString(),
+    });
+  if (error) throw error;
+  return phone;
+}
+
 export function subscribeToContacts(userId, callback) {
   return supabase
     .channel(`contacts_${userId}`)

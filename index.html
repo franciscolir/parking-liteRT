@@ -52,10 +52,11 @@
         <input
           type="text"
           id="guest-name"
-          placeholder="Ingresa tu nombre para comenzar"
+          placeholder="INGRESA TU NOMBRE PARA COMENZAR"
           maxlength="32"
           autocomplete="off"
           autofocus
+          style="text-transform:uppercase"
         >
       </div>
       <div class="guest-login-error hidden" id="guest-login-error"></div>
@@ -116,10 +117,28 @@
         <h1>Patentes registradas</h1>
         <button class="btn-back" id="btn-plates-back">&#8592;</button>
       </div>
+      <!-- Buscador numérico: solo dígitos y la búsqueda arranca con 2 -->
       <div class="search-box">
         <svg viewBox="0 0 24 24" class="search-icon"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <input type="text" id="plate-search" placeholder="Buscar patente..." autocomplete="off">
+        <div id="plate-search" class="plate-search-display" data-empty="true">INGRESA LOS NÚMEROS DE LA PATENTE</div>
       </div>
+
+      <!-- Teclado numérico estilo dialer -->
+      <div class="numpad" id="plate-numpad">
+        <button class="numpad-key" data-key="1">1</button>
+        <button class="numpad-key" data-key="2">2</button>
+        <button class="numpad-key" data-key="3">3</button>
+        <button class="numpad-key" data-key="4">4</button>
+        <button class="numpad-key" data-key="5">5</button>
+        <button class="numpad-key" data-key="6">6</button>
+        <button class="numpad-key" data-key="7">7</button>
+        <button class="numpad-key" data-key="8">8</button>
+        <button class="numpad-key" data-key="9">9</button>
+        <button class="numpad-key numpad-clear" data-key="C">C</button>
+        <button class="numpad-key" data-key="0">0</button>
+        <button class="numpad-key numpad-back" data-key="⌫" aria-label="Borrar">⌫</button>
+      </div>
+
       <div class="plates-table" id="plates-table"></div>
       <div style="height:16px"></div>
     </div>
@@ -169,7 +188,7 @@
           </div>
           <div class="manual-status" id="manual-status"></div>
           <div class="manual-results" id="manual-results"></div>
-          <!-- Teclado virtual (se arma desde plate-search-view.js) -->
+          <!-- Teclado numérico estilo dialer (se arma desde plate-search-view.js) -->
           <div class="vkeyboard" id="manual-keyboard"></div>
         </div>
       </div>
@@ -271,15 +290,18 @@
         <button class="btn-primary btn-full" id="btn-add-contact">Agregar contacto</button>
       </div>
 
-      <!-- Enviar registros por WhatsApp (solo admin) -->
+      <!-- Número destino de reportes (tipo 'office'): se ALMACENA en
+           app_settings (global) y lo usa sendWhatsAppReport() -->
       <div class="card hidden" id="card-whatsapp-report">
         <div class="card-title">Enviar registros por WhatsApp</div>
         <p class="card-hint" id="whatsapp-report-hint">Envía el reporte del incidente al número que indiques.</p>
         <div class="form-group">
-          <label>Número de destino</label>
+          <label>Número destino (tipo 'office')</label>
           <input type="tel" id="whatsapp-report-phone" placeholder="Ej: +56 9 8765 4321"
                  inputmode="tel" autocomplete="off">
+          <p class="card-hint">Queda guardado para todos los usuarios: es el destino de los reportes.</p>
         </div>
+        <button class="btn-primary btn-full" id="btn-save-whatsapp-phone">Guardar número</button>
         <button class="btn-whatsapp btn-full" id="btn-whatsapp-report">Enviar por WhatsApp</button>
       </div>
       <div style="height:16px"></div>

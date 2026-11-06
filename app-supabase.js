@@ -21,6 +21,7 @@ import {
   saveScan, getScanHistory, getScanStats,
   getContacts, addContact, updateContact, deleteContact,
   getEmergencyContacts, saveEmergencyContacts,
+  getOfficePhone, saveOfficePhone,
   setFlotanteSession,
   getProfile, updateProfile,
   subscribeToPlates, subscribeToScanHistory, subscribeToContacts,
@@ -76,6 +77,8 @@ let contacts = [];
 let emergencyContacts = DEFAULT_EMERGENCY_CONTACTS;
 let platesCache = { special_needs: [], administration: [], first_aid: [] };
 let subscriptions = [];
+let plateQuery = '';      // búsqueda numérica de patente (solo dígitos)
+let officePhone = '';     // número destino de reportes (tipo 'office'), en app_settings
 
 // Vista unificada Cámara / Manual ("Buscar patente")
 let plateSearch = null;          // PlateSearchView (modo manual)
@@ -342,7 +345,7 @@ function setupUIEvents() {
   document.getElementById('btn-home-scan').onclick = () => navigate('camera');
   document.getElementById('btn-home-plates').onclick = () => navigate('plates');
   document.getElementById('btn-plates-back').onclick = () => navigate('home');
-  document.getElementById('plate-search').oninput = (e) => renderPlatesTable(e.target.value);
+  bindPlateKeypad();   // dialer numérico de la vista Patentes
 
   // Cámara
   document.getElementById('scan-toggle').onchange = toggleScan;
@@ -363,6 +366,7 @@ function setupUIEvents() {
 
   // Envío de registros por WhatsApp (solo admin, vista Llamadas)
   document.getElementById('btn-whatsapp-report').onclick = sendWhatsAppReportToNumber;
+  document.getElementById('btn-save-whatsapp-phone').onclick = saveWhatsAppPhone;
   loadWhatsAppPhone();
   // El hint de la card de WhatsApp sigue al formulario de reporte.
   ['reg-plate', 'reg-vehicle', 'reg-incident', 'reg-location', 'reg-desc'].forEach(id => {
@@ -483,7 +487,7 @@ window.navigate = async function (view) {
       runDiagnostics();
       break;
     case 'plates':
-      renderPlatesTable();
+      renderPlatesTable(plateQuery);
       break;
     case 'camera':
       updateHistory();
@@ -697,7 +701,20 @@ async function renderGuestLogin() {
   document.body.classList.add('is-guest-login');
 
   // Reset
-  if (input) { input.value = ''; input.focus(); }
+  if (input) {
+    input.value = '';
+    input.focus();
+    // Todo en MAYÚSCULAS: la whitelist se guarda y se compara en
+    // mayúsculas, así nunca hay dos accesos para el mismo nombre.
+    if (!input.dataset.upperBound) {
+      input.dataset.upperBound = '1';
+      input.addEventListener('input', () => {
+        const start = input.selectionStart;
+        input.value = input.value.toUpperCase();
+        try { input.setSelectionRange(start, start); } catch { /* solo lectura */ }
+      });
+    }
+  }
   if (error) error.classList.add('hidden');
   if (adminForm) adminForm.classList.add('hidden');
   if (adminError) adminError.classList.add('hidden');
@@ -709,7 +726,7 @@ async function renderGuestLogin() {
   form.onsubmit = async (e) => {
     e.preventDefault();
     console.log('[GuestLogin] Submit');
-    const name = input?.value.trim();
+    const name = (input?.value || '').trim().toUpperCase();
     if (!name) {
       if (error) { error.textContent = 'Ingresa un nombre'; error.classList.remove('hidden'); }
       return;
@@ -1568,6 +1585,9 @@ function updateCallViewAccess() {
   if (isAdmin) {
     renderDefaultContactInputs();
     updateWhatsAppReportHint();
+    // El número destino (tipo 'office') vive en app_settings: se recarga
+    // al entrar a la vista para mostrar el valor global actual.
+    loadWhatsAppPhone();
   }
 }
 
@@ -1664,19 +1684,28 @@ function readIncidentForm() {
 
 /**
  * Manda el reporte de incidente por WhatsApp.
- * (botón de la vista Registro: va al contacto de tipo "oficina" si hay)
+ * (botón de la vista Registro: usa el número destino 'office' que
+ * quedó ALMACENADO en la vista Llamadas; si no hay, cae al contacto
+ * de tipo "oficina")
  */
 function sendWhatsAppReport() {
   const msg = buildIncidentReportMessage(readIncidentForm());
   if (!msg) { showToast('Complete patente, vehículo e incidente', 'error'); return; }
-  const officePhone = getAllContacts().find(c => c.type === 'office' && c.phone)?.phone || '';
-  window.open(buildWhatsappUrl(officePhone, msg), '_blank');
+  const dest = normalizeWhatsAppNumber(officePhone)
+    || getAllContacts().find(c => c.type === 'office' && c.phone)?.phone
+    || '';
+  if (!dest) {
+    showToast('Configure el número destino en la vista Llamadas', 'error');
+    navigate('call');
+    return;
+  }
+  window.open(buildWhatsappUrl(dest, msg), '_blank');
 }
 
 /**
  * Manda el reporte de incidente por WhatsApp al número que escribe
- * el admin (vista Llamadas). El número queda guardado en el equipo
- * para no escribirlo de nuevo cada vez.
+ * el admin (vista Llamadas). El número queda ALMACENADO en
+ * app_settings (global) para no escribirlo de nuevo cada vez.
  */
 function sendWhatsAppReportToNumber() {
   const input = document.getElementById('whatsapp-report-phone');
@@ -1693,7 +1722,9 @@ function sendWhatsAppReportToNumber() {
   }
 
   window.open(buildWhatsappUrl(phone, msg), '_blank');
-  try { localStorage.setItem('plateWhatsappPhone', phone); } catch (e) { /* no es crítico */ }
+  // Queda guardado (app_settings) y pasa a ser el destino por defecto
+  // de sendWhatsAppReport().
+  saveWhatsAppPhone().catch(() => {});
   showToast('Abriendo WhatsApp…', 'success');
 }
 
@@ -1710,13 +1741,49 @@ function updateWhatsAppReportHint() {
   }
 }
 
-/** Recupera el último número de destino usado (queda en el equipo). */
-function loadWhatsAppPhone() {
+/**
+ * Carga el número destino desde app_settings (global, lo comparten
+ * todos los equipos). Sin permiso de lectura → usa el último que
+ * hubiera en el equipo, si existe.
+ */
+async function loadWhatsAppPhone() {
   try {
-    const saved = localStorage.getItem('plateWhatsappPhone');
-    const input = document.getElementById('whatsapp-report-phone');
-    if (saved && input) input.value = saved;
-  } catch (e) { /* almacenamiento bloqueado: se ignora */ }
+    const remote = await getOfficePhone();
+    if (remote) officePhone = remote;
+    else {
+      // Compatibilidad: números guardados antes de pasar a app_settings.
+      const legacy = localStorage.getItem('plateWhatsappPhone');
+      if (legacy && !officePhone) officePhone = legacy;
+    }
+  } catch (e) {
+    console.warn('[WhatsApp] loadPhone error:', e);
+  }
+
+  const input = document.getElementById('whatsapp-report-phone');
+  if (input && document.activeElement !== input) input.value = officePhone;
+  return officePhone;
+}
+
+/** Guarda el número destino en app_settings (solo admin, RLS). */
+async function saveWhatsAppPhone() {
+  const input = document.getElementById('whatsapp-report-phone');
+  const raw = (input?.value || '').trim();
+  if (!raw) { showToast('Ingrese el número de destino', 'error'); return null; }
+
+  const phone = normalizeWhatsAppNumber(raw);
+  if (!phone) { showToast('Número inválido', 'error'); return null; }
+
+  try {
+    officePhone = await saveOfficePhone(phone);
+  } catch (e) {
+    showToast('No se pudo guardar: ' + (e?.message || 'error'), 'error');
+    return null;
+  }
+
+  try { localStorage.setItem('plateWhatsappPhone', officePhone); } catch (e) { /* opcional */ }
+  if (input) input.value = officePhone;
+  showToast('Número destino guardado', 'success');
+  return officePhone;
 }
 
 // ============================================================
@@ -1756,6 +1823,38 @@ window.sendRegistration = async function () {
 // ============================================================
 // TABLA DE PATENTES
 // ============================================================
+// ============================================================
+// BÚSQUEDA DE PATENTE CON DIALER NUMÉRICO
+// ------------------------------------------------------------
+// La vista Patentes busca solo con dígitos y recién a partir del
+// 2° número (con uno solo el filtro es tan amplio que no sirve).
+// ============================================================
+function bindPlateKeypad() {
+  const numpad = document.getElementById('plate-numpad');
+  if (!numpad || numpad.dataset.bound) return;
+  numpad.dataset.bound = '1';
+
+  numpad.addEventListener('click', (e) => {
+    const key = e.target.closest('[data-key]')?.dataset.key;
+    if (!key) return;
+
+    if (key === 'C') plateQuery = '';
+    else if (key === '⌫') plateQuery = plateQuery.slice(0, -1);
+    else if (/^\d$/.test(key)) plateQuery = (plateQuery + key).slice(0, 10);
+
+    updatePlateSearchDisplay();
+    renderPlatesTable(plateQuery);
+  });
+}
+
+/** Refleja los dígitos tipeados en el display del buscador. */
+function updatePlateSearchDisplay() {
+  const display = document.getElementById('plate-search');
+  if (!display) return;
+  display.textContent = plateQuery || 'INGRESA LOS NÚMEROS DE LA PATENTE';
+  display.dataset.empty = plateQuery ? 'false' : 'true';
+}
+
 function renderPlatesTable(filter) {
   const table = document.getElementById('plates-table');
   if (!table) return;
@@ -1769,8 +1868,15 @@ function renderPlatesTable(filter) {
     }
   }
 
-  const q = (filter || '').toUpperCase().trim();
-  const rows = q ? all.filter(r => r.plate.includes(q)) : all;
+  // Solo dígitos: la búsqueda recién arranca con 2 números.
+  const q = String(filter || '').replace(/\D/g, '').trim();
+  if (q.length === 1) {
+    table.innerHTML = '<div class="plates-empty">Ingresa al menos 2 números para buscar</div>';
+    return;
+  }
+  const rows = q.length >= 2
+    ? all.filter(r => String(r.plate).replace(/\D/g, '').includes(q))
+    : all;
 
   if (!rows.length) {
     table.innerHTML = '<div class="plates-empty">Sin resultados</div>';

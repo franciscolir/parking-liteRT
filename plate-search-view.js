@@ -1,14 +1,18 @@
 // ============================================================
-// plate-search-view.js - Buscador de patentes con teclado virtual
+// plate-search-view.js - Buscador de patentes con teclado numérico
 // ------------------------------------------------------------
 // Modo "Manual" de la vista unificada (Cámara / Manual).
 //
 // - El input es `readonly` + `inputmode="none"`: en el celular NUNCA se
 //   abre el teclado nativo. Toda la escritura se hace con el teclado
 //   virtual que se arma en esta misma vista.
+// - El teclado es un DIALER NUMÉRICO: solo se buscan dígitos de la
+//   patente (el `ilike` matchea los dígitos dentro de la patente).
+//   Las letras no se pueden tipear: evita combinaciones que no
+//   existen en el padrón.
 // - La búsqueda va contra Supabase con `ilike` (coincidencia parcial),
 //   con debounce para no saturar la base. La consulta recién arranca
-//   cuando hay MIN_QUERY_LENGTH caracteres (2 o más): con una sola letra
+//   cuando hay MIN_QUERY_LENGTH dígitos (2 o más): con un solo número
 //   la búsqueda es demasiado amplia y golpea la base al pedo.
 // - No depende del modo cámara: el resultado se entrega por callback
 //   (`onSelect`) para que la app lo procese con el mismo camino que una
@@ -21,22 +25,16 @@ import { searchPlates } from './supabase-client.js';
 import { TYPE_LABELS } from './plate-types.js';
 
 // ------------------------------------------------------------
-// Teclado virtual
+// Teclado numérico (dialer)
 // ------------------------------------------------------------
 // 'BACKSPACE' = borrar, 'CLEAR' = limpiar todo.
-//
-// SIN VOCALES: el formato de patente vigente (BB·BB·10) usa solo
-// consonantes y números, así que A, E, I, O y U no están en el teclado
-// (evita tipear letras que después no van a existir).
-// Las 21 consonantes del español van repartidas en 3 filas de 7.
-// No hay tecla de espacio: las patentes no llevan espacios. En su lugar,
-// a los lados del bloque de letras van los botones verticales de
-// Limpiar y Borrar (aprovechan el espacio libre de los costados).
+// 4 filas de 3 teclas, estilo teléfono: 1-9 arriba y
+// Limpiar / 0 / Borrar abajo.
 export const KEYBOARD_ROWS = [
-  ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
-  ['Q', 'W', 'R', 'T', 'Y', 'P', 'L'],
-  ['S', 'D', 'F', 'G', 'H', 'J', 'K'],
-  ['Z', 'X', 'C', 'V', 'B', 'N', 'M'],
+  ['1', '2', '3'],
+  ['4', '5', '6'],
+  ['7', '8', '9'],
+  ['CLEAR', '0', 'BACKSPACE'],
 ];
 
 /** Texto visible de las teclas especiales. */
@@ -52,11 +50,11 @@ export const DEBOUNCE_MS = 200;
 export const MAX_RESULTS = 30;
 
 /**
- * Mínimo de caracteres para empezar a buscar.
+ * Mínimo de dígitos para empezar a buscar.
  *
- * Con un solo carácter la búsqueda es demasiado amplia (casi todas las
+ * Con un solo número la búsqueda es demasiado amplia (casi todas las
  * patentes) y golpea la base sin sentido: la consulta arranca recién
- * cuando hay 2 caracteres o más.
+ * cuando hay 2 dígitos o más.
  */
 export const MIN_QUERY_LENGTH = 2;
 
@@ -64,16 +62,12 @@ export const MIN_QUERY_LENGTH = 2;
 export const MAX_LENGTH = 10;
 
 /**
- * Limpia lo que el usuario escribe: solo letras, números y espacios.
+ * Limpia lo que el usuario tipea: SOLO DÍGITOS (el dialer numérico).
  * Además de evitar caracteres raros, saca los comodines de SQL ('%', '_')
  * que en `ilike` transformarían la búsqueda en otra cosa.
  */
 export function sanitizeQuery(text) {
-  return String(text ?? '')
-    .toUpperCase()
-    .replace(/[^A-Z0-9 ]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return String(text ?? '').replace(/\D/g, '');
 }
 
 /** Escapa texto para insertarlo en HTML. */
@@ -155,35 +149,15 @@ export class PlateSearchView {
     return true;
   }
 
-  /** Dibuja el teclado virtual. */
+  /** Dibuja el dialer numérico (4 filas de 3 teclas). */
   _renderKeyboard() {
     if (!this.keyboardEl) return;
     this.keyboardEl.innerHTML = '';
+    this.keyboardEl.classList.add('vk-dialer');
 
-    // Fila 0: los números ocupan todo el ancho.
-    this.keyboardEl.appendChild(this._buildRow(KEYBOARD_ROWS[0]));
-
-    // Bloque de letras: los 3 filas de consonantes y, a la izquierda, los
-    // botones verticales de Limpiar y Borrar (uno arriba del otro).
-    // Van juntos en una sola columna del ancho de una tecla: así las
-    // letras usan todo el ancho lateral que queda libre.
-    const block = document.createElement('div');
-    block.className = 'vk-block';
-
-    const side = document.createElement('div');
-    side.className = 'vk-side-col';
-    side.appendChild(this._buildSideKey('CLEAR', 'vk-side-tall'));
-    side.appendChild(this._buildSideKey('BACKSPACE', 'vk-side-icon'));
-    block.appendChild(side);
-
-    const letters = document.createElement('div');
-    letters.className = 'vk-letters';
-    for (const row of KEYBOARD_ROWS.slice(1)) {
-      letters.appendChild(this._buildRow(row));
+    for (const row of KEYBOARD_ROWS) {
+      this.keyboardEl.appendChild(this._buildRow(row));
     }
-    block.appendChild(letters);
-
-    this.keyboardEl.appendChild(block);
   }
 
   /** Crea una fila de teclas. */
@@ -198,39 +172,25 @@ export class PlateSearchView {
     return rowEl;
   }
 
-  /** Crea una tecla normal (letra o número). */
+  /** Crea una tecla (dígito o especial). */
   _buildKey(key) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'vk-key';
     btn.textContent = KEY_LABELS[key] || key;
     btn.dataset.key = key;
+    if (key === 'BACKSPACE') btn.setAttribute('aria-label', 'Borrar el último número');
+    if (key === 'CLEAR') btn.setAttribute('aria-label', 'Limpiar la patente');
     btn.addEventListener('click', () => this.press(key));
     return btn;
   }
 
-  /**
-   * Crea un botón lateral vertical. Los dos van apilados en la columna
-   * izquierda: "Limpiar" (texto de lado) arriba y "Borrar" (ícono ⌫)
-   * abajo.
-   */
-  _buildSideKey(key, extraClass = '') {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'vk-key vk-side ' + extraClass;
-    btn.textContent = KEY_LABELS[key] || key;
-    btn.dataset.key = key;
-    btn.setAttribute('aria-label', key === 'BACKSPACE' ? 'Borrar el último carácter' : 'Limpiar la patente');
-    btn.addEventListener('click', () => this.press(key));
-    return btn;
-  }
-
-  /** Presiona una tecla del teclado virtual. */
+  /** Presiona una tecla del dialer numérico. */
   press(key) {
     if (key === 'BACKSPACE') this.query = this.query.slice(0, -1);
     else if (key === 'CLEAR') this.query = '';
-    else if (key === 'SPACE' || key === ' ') return;  // las patentes no llevan espacios
-    else this.query += String(key).toUpperCase();
+    else if (/^\d$/.test(String(key))) this.query += String(key);
+    else return;   // letras y demás: el dialer solo acepta números
 
     if (this.query.length > MAX_LENGTH) this.query = this.query.slice(0, MAX_LENGTH);
 
@@ -335,7 +295,7 @@ export class PlateSearchView {
     const messages = {
       idle: '',
       loading: 'Buscando…',
-      short: `Escriba al menos ${MIN_QUERY_LENGTH} caracteres.`,
+      short: `Ingrese al menos ${MIN_QUERY_LENGTH} números.`,
       empty: 'Sin resultados para esa patente.',
       error: 'Error al buscar: ' + (this.error || 'intentá de nuevo'),
       results: this.results.length === 1

@@ -53,7 +53,10 @@ export class GuestAuth {
   // LOGIN
   // ============================================================
   async login(name) {
-    const cleanName = String(name || '').trim();
+    // La whitelist SIEMPRE vive en MAYÚSCULAS: el nombre se normaliza
+    // acá para que "gogo" y "GOGO" sean el mismo acceso.
+    const original = String(name || '').trim();
+    const cleanName = original.toUpperCase();
     if (!cleanName) {
       return { ok: false, error: 'Ingresa un nombre' };
     }
@@ -64,9 +67,28 @@ export class GuestAuth {
       return { ok: false, error: 'El nombre no puede tener más de 32 caracteres' };
     }
 
-    const { data, error } = await supabase.rpc('validate_and_start_session', {
+    // Nombre dado de baja en la whitelist → no puede iniciar sesión.
+    try {
+      const { data: active } = await supabase.rpc('is_name_active', { p_name: cleanName });
+      const inactive = active === false || active?.active === false || active?.is_active === false;
+      if (inactive) {
+        return { ok: false, error: 'Este nombre está desactivado. Contacta al administrador.' };
+      }
+    } catch { /* RPC aún no creado: se continúa igual */ }
+
+    let { data, error } = await supabase.rpc('validate_and_start_session', {
       p_name: cleanName,
     });
+
+    // Compatibilidad: si la whitelist todavía tiene nombres en minúsculas
+    // (antes de correr whitelist-admin.sql), se reintenta con el texto
+    // original para no dejar a nadie fuera.
+    if (!error && data?.ok === false && original !== cleanName) {
+      const retry = await supabase.rpc('validate_and_start_session', { p_name: original });
+      if (!retry.error && retry.data?.ok) {
+        data = retry.data;
+      }
+    }
 
     if (error) {
       console.error('[GuestAuth] login error:', error);

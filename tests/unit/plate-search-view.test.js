@@ -28,6 +28,7 @@ function mountDom() {
 }
 
 const TODAS_LAS_TECLAS = KEYBOARD_ROWS.flat();
+const DIGITOS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
 describe('plate-search-view.js', () => {
   beforeEach(() => {
@@ -40,24 +41,20 @@ describe('plate-search-view.js', () => {
   });
 
   // ============================================================
-  // sanitizeQuery
+  // sanitizeQuery (el dialer solo acepta dígitos)
   // ============================================================
   describe('sanitizeQuery', () => {
-    it('pasa a mayúsculas y recorta los espacios', () => {
-      expect(sanitizeQuery('  ab123  ')).toBe('AB123');
+    it('deja solo los dígitos', () => {
+      expect(sanitizeQuery('  123  ')).toBe('123');
     });
 
-    it('quita los caracteres que no sirven para una patente', () => {
-      expect(sanitizeQuery('AB-12!@#')).toBe('AB12');
-    });
-
-    it('quita los comodines de SQL (%, _)', () => {
+    it('saca letras, símbolos y comodines de SQL (%, _)', () => {
       // Con % o _ el `ilike` buscaría otra cosa distinto de lo tipeado.
-      expect(sanitizeQuery('A%B_C')).toBe('ABC');
+      expect(sanitizeQuery('AB-12!@#%_')).toBe('12');
     });
 
-    it('colapsa espacios seguidos', () => {
-      expect(sanitizeQuery('AB   12')).toBe('AB 12');
+    it('colapsa cualquier cosa que no sea número', () => {
+      expect(sanitizeQuery('1 2-3')).toBe('123');
     });
 
     it('tolera null / undefined / números', () => {
@@ -68,85 +65,48 @@ describe('plate-search-view.js', () => {
   });
 
   // ============================================================
-  // Teclado virtual
+  // Dialer numérico
   // ============================================================
-  describe('teclado virtual', () => {
-    it('tiene las consonantes y los números en las filas', () => {
-      for (const c of 'BCDFGHJKLMNPQRSTVWXYZ'.split('')) {
-        expect(TODAS_LAS_TECLAS).toContain(c);
-      }
-      expect(TODAS_LAS_TECLAS).toContain('0');
-      expect(TODAS_LAS_TECLAS).toContain('9');
-      // Borrar y Limpiar no son teclas de fila: van a los costados.
-      expect(TODAS_LAS_TECLAS).not.toContain('BACKSPACE');
-      expect(TODAS_LAS_TECLAS).not.toContain('CLEAR');
+  describe('dialer numérico', () => {
+    it('tiene los 10 dígitos repartidos en 4 filas de 3', () => {
+      expect(KEYBOARD_ROWS).toHaveLength(4);
+      for (const fila of KEYBOARD_ROWS) expect(fila).toHaveLength(3);
+
+      const teclas = TODAS_LAS_TECLAS;
+      for (const d of DIGITOS) expect(teclas).toContain(d);
+      // Sin repetidos: 10 dígitos + 2 especiales.
+      expect(new Set(teclas).size).toBe(teclas.length);
+      expect(teclas).toHaveLength(12);
     });
 
-    it('no tiene vocales (el formato de patente no las usa)', () => {
-      for (const v of ['A', 'E', 'I', 'O', 'U']) {
+    it('la última fila es Limpiar / 0 / Borrar', () => {
+      expect(KEYBOARD_ROWS[3]).toEqual(['CLEAR', '0', 'BACKSPACE']);
+    });
+
+    it('no tiene letras (la búsqueda es solo numérica)', () => {
+      for (const c of 'BCDFGHJKLMNPQRSTVWXYZ'.split('')) {
+        expect(TODAS_LAS_TECLAS).not.toContain(c);
+      }
+      for (const v of ['A', 'E', 'I', 'O', 'U', 'SPACE']) {
         expect(TODAS_LAS_TECLAS).not.toContain(v);
       }
     });
 
-    it('no tiene tecla de espacio (las patentes no llevan espacios)', () => {
-      expect(TODAS_LAS_TECLAS).not.toContain('SPACE');
-    });
-
-    it('reparte las consonantes en 3 filas de 7', () => {
-      // Fila 0 = números; las filas 1, 2 y 3 son las consonantes.
-      const filasDeLetras = KEYBOARD_ROWS.slice(1, 4);
-      expect(filasDeLetras.length).toBe(3);
-      for (const fila of filasDeLetras) {
-        expect(fila.length).toBe(7);
-      }
-      // Las 21 consonantes, todas y sin repetir.
-      const letras = filasDeLetras.flat();
-      expect(letras.length).toBe(21);
-      expect(new Set(letras).size).toBe(21);
-      // La L sube a la fila de arriba.
-      expect(KEYBOARD_ROWS[1]).toContain('L');
-      expect(KEYBOARD_ROWS[2]).not.toContain('L');
-    });
-
-    it('los botones de Limpiar y Borrar van apilados en la columna izquierda', () => {
-      const dom = mountDom();
-      const view = new PlateSearchView({ searchFn: vi.fn() });
-      view.init(dom);
-
-      const laterales = dom.querySelectorAll('#manual-keyboard .vk-side');
-      expect(laterales.length).toBe(2);
-      expect(laterales[0].dataset.key).toBe('CLEAR');
-      expect(laterales[1].dataset.key).toBe('BACKSPACE');
-
-      // Los dos están en la misma columna, uno arriba del otro.
-      const col = dom.querySelector('#manual-keyboard .vk-side-col');
-      expect(col.children.length).toBe(2);
-      expect(col.children[0].dataset.key).toBe('CLEAR');
-      expect(col.children[1].dataset.key).toBe('BACKSPACE');
-
-      // La columna va a la izquierda y las letras al lado derecho.
-      const block = dom.querySelector('#manual-keyboard .vk-block');
-      expect(block.children.length).toBe(2);
-      expect(block.children[0].classList.contains('vk-side-col')).toBe(true);
-      expect(block.children[1].classList.contains('vk-letters')).toBe(true);
-
-      // El bloque de letras tiene las 3 filas de consonantes.
-      expect(block.querySelectorAll('.vk-letters .vk-row').length).toBe(3);
-    });
-
-    it('las teclas especiales tienen etiqueta visible', () => {
-      expect(KEY_LABELS.BACKSPACE).toBeTruthy();
-      expect(KEY_LABELS.CLEAR).toBeTruthy();
-    });
-
-    it('dibuja una tecla por cada tecla del teclado, más los 2 botones laterales', () => {
+    it('dibuja una tecla por cada tecla del dialer', () => {
       const dom = mountDom();
       const view = new PlateSearchView({ searchFn: vi.fn() });
       view.init(dom);
 
       const keys = dom.querySelectorAll('#manual-keyboard .vk-key');
-      expect(keys.length).toBe(TODAS_LAS_TECLAS.length + 2);
+      expect(keys.length).toBe(TODAS_LAS_TECLAS.length);
       expect(dom.querySelectorAll('#manual-keyboard .vk-row').length).toBe(KEYBOARD_ROWS.length);
+      // El contenedor queda marcado para el estilo de dialer
+      expect(dom.querySelector('#manual-keyboard').classList.contains('vk-dialer')).toBe(true);
+    });
+
+    it('las teclas especiales tienen etiqueta visible', () => {
+      expect(KEY_LABELS.BACKSPACE).toBeTruthy();
+      expect(KEY_LABELS.CLEAR).toBeTruthy();
     });
 
     it('el input queda readonly y sin teclado nativo', () => {
@@ -159,32 +119,33 @@ describe('plate-search-view.js', () => {
       expect(input.getAttribute('inputmode')).toBe('none');
     });
 
-    it('escribe, borra y limpia con el teclado virtual', () => {
+    it('escribe, borra y limpia con el dialer', () => {
       const dom = mountDom();
       const view = new PlateSearchView({ searchFn: vi.fn() });
       view.init(dom);
 
-      view.press('a');
-      view.press('b');
-      expect(view.query).toBe('AB');
-      expect(dom.querySelector('#manual-plate-input').value).toBe('AB');
+      view.press('1');
+      view.press('2');
+      expect(view.query).toBe('12');
+      expect(dom.querySelector('#manual-plate-input').value).toBe('12');
 
       view.press('BACKSPACE');
-      expect(view.query).toBe('A');
+      expect(view.query).toBe('1');
 
       view.press('CLEAR');
       expect(view.query).toBe('');
     });
 
-    it('ignora el espacio (las patentes no llevan espacios)', () => {
+    it('ignora las letras (el dialer es solo numérico)', () => {
       const dom = mountDom();
       const view = new PlateSearchView({ searchFn: vi.fn() });
       view.init(dom);
 
       view.press('A');
+      view.press('b');
       view.press('SPACE');
       view.press(' ');
-      expect(view.query).toBe('A');
+      expect(view.query).toBe('');
     });
 
     it('no deja escribir más de MAX_LENGTH caracteres', () => {
@@ -192,7 +153,7 @@ describe('plate-search-view.js', () => {
       const view = new PlateSearchView({ searchFn: vi.fn() });
       view.init(dom);
 
-      for (let i = 0; i < MAX_LENGTH + 5; i++) view.press('1');
+      for (let i = 0; i < MAX_LENGTH + 5; i++) view.press('7');
       expect(view.query.length).toBe(MAX_LENGTH);
     });
   });
@@ -206,14 +167,14 @@ describe('plate-search-view.js', () => {
       const view = new PlateSearchView({ searchFn });
       view.init(mountDom());
 
-      view.press('A');
-      view.press('B');
+      view.press('1');
+      view.press('2');
       expect(searchFn).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
       expect(searchFn).toHaveBeenCalledTimes(1);
       expect(searchFn).toHaveBeenCalledWith({
-        search: 'AB',
+        search: '12',
         limit: expect.any(Number),
       });
     });
@@ -223,9 +184,9 @@ describe('plate-search-view.js', () => {
       const view = new PlateSearchView({ searchFn });
       view.init(mountDom());
 
-      view.press('A');
+      view.press('1');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS - 50);
-      view.press('B');
+      view.press('2');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS - 50);
 
       // Todavía no venció el debounce del último tecleo.
@@ -233,7 +194,7 @@ describe('plate-search-view.js', () => {
 
       await vi.advanceTimersByTimeAsync(50);
       expect(searchFn).toHaveBeenCalledTimes(1);
-      expect(searchFn).toHaveBeenCalledWith(expect.objectContaining({ search: 'AB' }));
+      expect(searchFn).toHaveBeenCalledWith(expect.objectContaining({ search: '12' }));
     });
 
     it('no consulta si la consulta queda vacía', async () => {
@@ -241,7 +202,7 @@ describe('plate-search-view.js', () => {
       const view = new PlateSearchView({ searchFn });
       view.init(mountDom());
 
-      view.press('A');
+      view.press('1');
       view.press('BACKSPACE');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
 
@@ -258,11 +219,11 @@ describe('plate-search-view.js', () => {
       const view = new PlateSearchView({ searchFn });
       view.init(mountDom());
 
-      view.press('A');
-      view.press('B');
+      view.press('1');
+      view.press('2');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
 
-      view.press('C');
+      view.press('3');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
 
       // La primera respuesta llega tarde: no debe pisar los resultados nuevos.
@@ -273,14 +234,14 @@ describe('plate-search-view.js', () => {
     });
 
     // ============================================================
-    // Mínimo de caracteres para buscar
+    // Mínimo de dígitos para buscar (2° carácter)
     // ============================================================
-    it('no consulta con un solo carácter', async () => {
+    it('no consulta con un solo número', async () => {
       const searchFn = vi.fn().mockResolvedValue([]);
       const view = new PlateSearchView({ searchFn });
       view.init(mountDom());
 
-      view.press('A');
+      view.press('1');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
 
       expect(searchFn).not.toHaveBeenCalled();
@@ -288,44 +249,44 @@ describe('plate-search-view.js', () => {
       expect(view.results).toEqual([]);
     });
 
-    it('consulta recién cuando hay 2 caracteres', async () => {
+    it('consulta recién cuando hay 2 números', async () => {
       const searchFn = vi.fn().mockResolvedValue([]);
       const view = new PlateSearchView({ searchFn });
       view.init(mountDom());
 
-      view.press('A');
+      view.press('1');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
       expect(searchFn).not.toHaveBeenCalled();
 
-      view.press('B');
+      view.press('2');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
       expect(searchFn).toHaveBeenCalledTimes(1);
-      expect(searchFn).toHaveBeenCalledWith(expect.objectContaining({ search: 'AB' }));
+      expect(searchFn).toHaveBeenCalledWith(expect.objectContaining({ search: '12' }));
     });
 
     it('el mínimo son 2 caracteres', () => {
       expect(MIN_QUERY_LENGTH).toBe(2);
     });
 
-    it('avisa que hay que escribir más caracteres', async () => {
+    it('avisa que hay que ingresar más números', async () => {
       const dom = mountDom();
       const status = dom.querySelector('#manual-status');
       const view = new PlateSearchView({ searchFn: vi.fn() });
       view.init(dom);
 
-      view.press('A');
+      view.press('1');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
 
-      expect(status.textContent).toContain('2 caracteres');
+      expect(status.textContent).toContain('2 números');
     });
 
-    it('borrar hasta dejar 1 carácter vuelve a cortar la búsqueda', async () => {
+    it('borrar hasta dejar 1 número vuelve a cortar la búsqueda', async () => {
       const searchFn = vi.fn().mockResolvedValue([]);
       const view = new PlateSearchView({ searchFn });
       view.init(mountDom());
 
-      view.press('A');
-      view.press('B');
+      view.press('1');
+      view.press('2');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
       expect(searchFn).toHaveBeenCalledTimes(1);
 
@@ -340,7 +301,7 @@ describe('plate-search-view.js', () => {
       const view = new PlateSearchView({ searchFn });
       view.init(mountDom());
 
-      view.press('A');
+      view.press('1');
       await view.refresh();
 
       expect(searchFn).not.toHaveBeenCalled();
@@ -361,8 +322,8 @@ describe('plate-search-view.js', () => {
       const view = new PlateSearchView({ searchFn });
       view.init(dom);
 
-      view.press('A');
-      view.press('B');
+      view.press('1');
+      view.press('2');
       // flush() arranca la búsqueda sin esperar el debounce.
       const pending = view.flush();
       expect(view.state).toBe('loading');
@@ -373,7 +334,7 @@ describe('plate-search-view.js', () => {
       expect(status.textContent).toContain('1 resultado');
       expect(dom.querySelectorAll('.manual-result').length).toBe(1);
 
-      view.press('C');
+      view.press('3');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
       expect(view.state).toBe('empty');
       expect(status.textContent).toContain('Sin resultados');
@@ -387,8 +348,8 @@ describe('plate-search-view.js', () => {
       const view = new PlateSearchView({ searchFn });
       view.init(dom);
 
-      view.press('A');
-      view.press('B');
+      view.press('1');
+      view.press('2');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
 
       expect(view.state).toBe('error');
@@ -404,8 +365,8 @@ describe('plate-search-view.js', () => {
       const view = new PlateSearchView({ searchFn });
       view.init(dom);
 
-      view.press('A');
-      view.press('B');
+      view.press('1');
+      view.press('2');
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
       expect(view.state).toBe('results');
 
@@ -429,8 +390,8 @@ describe('plate-search-view.js', () => {
       const view = new PlateSearchView({ searchFn, onSelect });
       view.init(dom);
 
-      view.press('A');
-      view.press('B');
+      view.press('1');
+      view.press('2');
       await view.flush();
 
       dom.querySelector('.manual-result').click();
@@ -448,8 +409,8 @@ describe('plate-search-view.js', () => {
       const view = new PlateSearchView({ searchFn });
       view.init(dom);
 
-      view.press('A');
-      view.press('B');
+      view.press('1');
+      view.press('2');
       await view.flush();
 
       expect(dom.querySelectorAll('.manual-result img').length).toBe(0);

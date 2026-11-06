@@ -19,55 +19,153 @@ export class AdminDashboard {
     this.activeTab = 'users';
     this.usersCache = [];
     this.platesCache = [];
-    this.scansCache = [];
+    this.whitelistCache = [];
     this.searchTimeout = null;
     this.currentUser = null;
     this.bulkSession = new BulkPlateSession();
+    this._editingAccessId = null;
   }
   // ============================================================
-  // ACCESS (whitelist + sesiones)
+  // ACCESS (whitelist unificada: sesiones activas + nombres)
   // ============================================================
    async loadWhitelist() {
     const list = document.getElementById('admin-whitelist-list');
     if (!list) return;
     list.innerHTML = '<div class="admin-loading">Cargando...</div>';
 
-    // Obtener whitelist y sesiones activas
-    const [whitelistRes, sessionsRes] = await Promise.all([
+    // Whitelist + sesiones activas + estado activo/inactivo de cada nombre
+    const [whitelistRes, sessionsRes, activeRes] = await Promise.all([
       supabase.rpc('get_whitelist'),
       supabase.rpc('get_active_sessions'),
+      supabase.rpc('get_whitelist_active'),   // creado en whitelist-admin.sql (trae is_active)
     ]);
 
-    if (whitelistRes.error) {
+    // Fuente preferida: get_whitelist_active (incluye is_active)
+    const useActive = !activeRes.error && Array.isArray(activeRes.data);
+    if (!useActive && whitelistRes.error) {
       list.innerHTML = `<div class="admin-error">Error: ${this.escapeHtml(whitelistRes.error.message)}</div>`;
       return;
     }
 
-    const whitelist = whitelistRes.data || [];
-    const activeNames = new Set((sessionsRes.data || []).map(s => s.name));
+    const whitelist = useActive ? activeRes.data : (whitelistRes.data || []);
 
-    if (!whitelist.length) {
+    // is_active: preferir leerlo directo de la tabla (fallback: activo)
+    const activeMap = new Map();
+    try {
+      const { data: rows, error: rowsErr } = await supabase
+        .from('name_whitelist')
+        .select('id, is_active');
+      if (!rowsErr && rows) {
+        rows.forEach(r => activeMap.set(String(r.id), r.is_active !== false));
+      }
+    } catch { /* sin acceso directo → asumir activo */ }
+
+    // Sesiones activas: la comparación es en MAYÚSCULAS (la whitelist
+    // siempre se guarda en mayúsculas).
+    const sessionByName = new Map(
+      (sessionsRes.data || []).map(s => [String(s.name || '').trim().toUpperCase(), s])
+    );
+
+    this.whitelistCache = whitelist.map(w => ({
+      ...w,
+      isActive: (w.is_active ?? activeMap.get(String(w.id)) ?? true) !== false,
+      session: sessionByName.get(String(w.allowed_name || '').trim().toUpperCase()) || null,
+    }));
+
+    // Checkbox "Activar todos"
+    const checkAll = document.getElementById('admin-check-all');
+    if (checkAll) {
+      checkAll.checked = this.whitelistCache.length > 0 && this.whitelistCache.every(w => w.isActive);
+    }
+
+    if (!this.whitelistCache.length) {
       list.innerHTML = '<div class="admin-empty">No hay nombres autorizados</div>';
       return;
     }
 
-    list.innerHTML = whitelist.map(w => {
-      const inUse = activeNames.has(w.allowed_name);
+    // Una sola lista: cada fila es una píldora con su estado.
+    list.innerHTML = this.whitelistCache.map(w => {
+      const inUse = !!w.session;
+      const name = String(w.allowed_name);
+      const badge = !w.isActive ? 'INACTIVO' : (inUse ? 'EN USO' : 'LIBRE');
+      const badgeCls = !w.isActive ? 'off' : (inUse ? 'on' : '');
+      const diffMin = (inUse && w.session.last_activity)
+        ? Math.max(0, Math.round((Date.now() - new Date(w.session.last_activity).getTime()) / 60000))
+        : null;
+      // En uso ⇒ botón "Salir"; libre ⇒ checkbox que activa el login.
+      const checkControl = inUse
+        ? `<button class="btn-small btn-danger btn-logout" data-action="force-logout" data-name="${this.escapeHtml(name)}" title="Cerrar sesión de ${this.escapeHtml(name)}">Salir</button>`
+        : `<label class="pill-check" title="Activar / desactivar">
+             <input type="checkbox" data-action="toggle-active" data-id="${w.id}" ${w.isActive ? 'checked' : ''}>
+           </label>`;
       return `
-        <div class="admin-card">
-          <div class="admin-card-main">
-            <div class="admin-card-title">${this.escapeHtml(w.allowed_name)}</div>
-            <div class="admin-card-meta">
-              <span class="admin-role ${inUse ? 'admin' : 'user'}">${inUse ? 'EN USO' : 'LIBRE'}</span>
-            </div>
+        <div class="admin-card pill-row ${w.isActive ? '' : 'pill-inactive'}" data-id="${w.id}" data-name="${this.escapeHtml(name)}">
+          ${checkControl}
+          <span class="pill-dot ${inUse ? 'on' : ''}" title="${inUse ? 'En uso' : 'Libre'}"></span>
+          <div class="pill">
+            <span class="pill-name">${this.escapeHtml(name)}</span>
+            <span class="pill-badge ${badgeCls}">${badge}</span>
+            <span class="pill-meta">${diffMin !== null ? `Activo hace ${diffMin} min` : ''}</span>
           </div>
           <div class="admin-card-actions">
-            ${inUse ? `<button class="btn-small btn-danger" data-action="force-logout" data-name="${this.escapeHtml(w.allowed_name)}">Forzar logout</button>` : ''}
-            <button class="btn-small btn-secondary" data-action="remove-access" data-id="${w.id}" data-name="${this.escapeHtml(w.allowed_name)}">🗑️</button>
+            <button class="btn-small btn-secondary" data-action="row-menu" title="Acciones">⋯</button>
+          </div>
+          <div class="pill-actions hidden">
+            <button class="btn-small btn-secondary" data-action="edit-access">✏️ Editar</button>
+            <button class="btn-small btn-danger" data-action="remove-access" data-id="${w.id}" data-name="${this.escapeHtml(name)}">🗑️ Borrar</button>
           </div>
         </div>
       `;
     }).join('');
+  }
+
+  /** Activa o desactiva un nombre (si está inactivo, no puede loguearse). */
+  async toggleActive(id, active) {
+    // RPC creado en whitelist-admin.sql; si todavía no existe, update directo
+    let { data, error } = await supabase.rpc('set_whitelist_active', { p_id: id, p_active: active });
+    if (!error && data?.ok === false) error = { message: data.error || 'No se pudo actualizar' };
+    if (error) {
+      const res = await supabase
+        .from('name_whitelist')
+        .update({ is_active: active, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      error = res.error;
+    }
+
+    if (error) {
+      this.toast('Error: ' + error.message, 'error');
+      await this.loadWhitelist();
+      return;
+    }
+
+    this.toast(active ? 'Nombre activado' : 'Nombre desactivado', 'success');
+    await this.loadWhitelist();
+  }
+
+  /** Activa o desactiva todos los nombres de una vez. */
+  async setAllActive(active) {
+    const targets = (this.whitelistCache || []).filter(w => !!w.isActive !== active);
+    if (!targets.length) {
+      this.toast(active ? 'Todos ya están activos' : 'Todos ya están inactivos');
+      return;
+    }
+
+    let failed = 0;
+    for (const w of targets) {
+      let { data, error } = await supabase.rpc('set_whitelist_active', { p_id: w.id, p_active: active });
+      if (!error && data?.ok === false) error = { message: data.error };
+      if (error) {
+        const res = await supabase
+          .from('name_whitelist')
+          .update({ is_active: active, updated_at: new Date().toISOString() })
+          .eq('id', w.id);
+        if (res.error) failed++;
+      }
+    }
+
+    if (failed) this.toast(`${failed} nombre(es) no se pudieron actualizar`, 'error');
+    else this.toast(active ? 'Todos activados' : 'Todos desactivados', 'success');
+    await this.loadWhitelist();
   }
 
   async loadTimeoutConfig() {
@@ -98,46 +196,100 @@ export class AdminDashboard {
       return;
     }
     this.toast('Timeout actualizado', 'success');
+    document.getElementById('admin-settings-modal')?.classList.add('hidden');
   }
 
-   openAccessModal() {
-    console.log('[Admin] openAccessModal');
+   openAccessModal(entry = null) {
+    console.log('[Admin] openAccessModal', entry);
     const modal = document.getElementById('admin-access-modal');
     const input = document.getElementById('admin-access-name');
+    const title = document.getElementById('admin-access-modal-title');
+    const hint = document.getElementById('admin-access-hint');
     if (!modal) { console.error('[Admin] modal no encontrado'); return; }
-    modal.classList.remove('hidden');
-    if (input) {
-      input.value = '';
-      setTimeout(() => input.focus(), 100);
+
+    if (entry?.id) {
+      // Modo edición (un solo nombre)
+      this._editingAccessId = entry.id;
+      if (title) title.textContent = 'Editar nombre autorizado';
+      if (hint) hint.textContent = 'Guarda el nuevo nombre en MAYÚSCULAS.';
+      if (input) input.value = String(entry.name || '').toUpperCase();
+    } else {
+      // Modo alta: admite VARIOS nombres separados por un espacio
+      this._editingAccessId = null;
+      if (title) title.textContent = 'Agregar nombres autorizados';
+      if (hint) hint.textContent = 'Para agregar varios, sepáralos con un espacio.';
+      if (input) input.value = '';
     }
+
+    modal.classList.remove('hidden');
+    if (input) setTimeout(() => input.focus(), 100);
   }
 
   async saveAccess() {
     console.log('[Admin] saveAccess');
     const input = document.getElementById('admin-access-name');
-    const name = input?.value.trim();
-    if (!name) {
+    const raw = (input?.value || '').trim().toUpperCase();
+    if (!raw) {
       this.toast('Ingresa un nombre', 'error');
       return;
     }
-    if (name.length < 2) {
-      this.toast('Mínimo 2 caracteres', 'error');
+
+    // ============================================================
+    // MODO EDICIÓN (un solo nombre, conserva los espacios internos)
+    // ============================================================
+    if (this._editingAccessId) {
+      const name = raw;   // un solo nombre completo: "ANA PEREZ"
+      if (name.length < 2 || name.length > 32) {
+        this.toast('El nombre debe tener entre 2 y 32 caracteres', 'error');
+        return;
+      }
+
+      let { data, error } = await supabase.rpc('update_whitelist_entry', { p_id: this._editingAccessId, p_name: name });
+      if (!error && data?.ok === false) error = { message: data.error || 'No se pudo actualizar' };
+      if (error) {
+        const res = await supabase
+          .from('name_whitelist')
+          .update({ allowed_name: name, updated_at: new Date().toISOString() })
+          .eq('id', this._editingAccessId);
+        error = res.error;
+      }
+
+      if (error) {
+        this.toast('Error: ' + error.message, 'error');
+        return;
+      }
+
+      this.toast('Nombre actualizado', 'success');
+      this._editingAccessId = null;
+      document.getElementById('admin-access-modal')?.classList.add('hidden');
+      await this.loadWhitelist();
       return;
     }
 
-    const { data, error } = await supabase.rpc('add_whitelist_entry', { p_name: name });
-    console.log('[Admin] add_whitelist_entry:', data, error);
+    // ============================================================
+    // ALTA MASIVA: "GUARDIA1 GUARDIA2 GUARDIA3" → 3 accesos
+    // ============================================================
+    const names = [...new Set(raw.split(/\s+/).filter(Boolean))];
+    let added = 0;
+    let failed = 0;
 
-    if (error) {
-      this.toast('Error: ' + error.message, 'error');
+    for (const name of names) {
+      if (name.length < 2 || name.length > 32) { failed++; continue; }
+      const { data, error } = await supabase.rpc('add_whitelist_entry', { p_name: name });
+      console.log('[Admin] add_whitelist_entry:', name, data, error);
+      if (error || data?.ok === false) failed++;
+      else added++;
+    }
+
+    if (!added) {
+      this.toast(failed ? 'No se pudo agregar ningún nombre' : 'Error', 'error');
       return;
     }
-    if (data?.ok === false) {
-      this.toast(data.error || 'Error', 'error');
-      return;
-    }
 
-    this.toast('Nombre agregado', 'success');
+    this.toast(
+      added === 1 ? 'Nombre agregado' : `${added} nombres agregados` + (failed ? ` (${failed} con error)` : ''),
+      'success'
+    );
 
     const modal = document.getElementById('admin-access-modal');
     if (modal) {
@@ -205,16 +357,13 @@ export class AdminDashboard {
 
     // 4. Cargar datos de la vista inicial (Home)
     await this.loadStats();
-    await this.loadSessions();
     await this.loadRecentScans();
 
     // 5. Cargar el resto en background
     this.loadUsers();
     this.loadPlates();
     this.loadPlateStats();
-    this.loadScans();
     this.loadWhitelist();
-    this.loadTimeoutConfig();
 
     console.log('[Admin] init() COMPLETADO');
     return true;
@@ -253,10 +402,6 @@ export class AdminDashboard {
           <svg viewBox="0 0 24 24" width="16" height="16"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 10h2M11 10h2M15 10h2M7 14h10" stroke="currentColor" stroke-width="2"/></svg>
           Patentes
         </button>
-        <button class="admin-tab" data-tab="scans">
-          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M3 3v18h18" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 14l4-4 4 4 5-5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-          Escaneos
-        </button>
       </div>
 
       <!-- ============ TAB: HOME ============ -->
@@ -269,13 +414,7 @@ export class AdminDashboard {
           <div class="stat-card admin-stat"><div class="num" id="stat-today">—</div><div class="label">Hoy</div></div>
         </div>
 
-        <!-- Sesiones activas -->
-        <div class="admin-section-header">
-          <h3>🟢 Sesiones activas</h3>
-        </div>
-        <div id="admin-sessions-list" class="admin-list"></div>
-
-        <!-- Últimas 3 patentes escaneadas -->
+        <!-- Últimas patentes escaneadas (antes era la pestaña Escaneos) -->
         <div class="admin-section-header">
           <h3>📸 Últimas patentes escaneadas</h3>
         </div>
@@ -300,32 +439,19 @@ export class AdminDashboard {
 
         <!-- Sub-vista: usuarios flotantes (ingresan solo con nombre) -->
         <div class="admin-subtab-content" id="admin-subtab-users-floating">
-          <div class="admin-section-header">
-            <h3>🟢 Sesiones activas</h3>
-          </div>
-          <div id="admin-floating-sessions" class="admin-list"></div>
-
-          <div class="admin-section-header">
-            <h3>🔐 Nombres autorizados</h3>
-          </div>
+          <!-- Una sola lista: sesiones activas + whitelist, en píldoras -->
           <div class="admin-toolbar">
-            <button class="btn-primary btn-small" id="admin-add-access">+ Agregar nombre</button>
+            <label class="check-all" title="Activar o desactivar todos los nombres">
+              <input type="checkbox" id="admin-check-all">
+              <span>Activar todos</span>
+            </label>
+            <button class="btn-primary btn-small" id="admin-add-access">+ Agregar</button>
+            <button class="btn-secondary btn-small" id="admin-settings-btn">⚙️ Ajustes</button>
+          </div>
+          <div class="admin-section-header">
+            <h3>🔐 Usuarios flotantes</h3>
           </div>
           <div id="admin-whitelist-list" class="admin-list"></div>
-
-          <div class="admin-section-header">
-            <h3>⚙️ Configuración</h3>
-          </div>
-          <div class="admin-card">
-            <div class="admin-card-main">
-              <div class="admin-card-title">Timeout de sesión</div>
-              <div class="admin-card-sub">Minutos antes de liberar un nombre automáticamente</div>
-            </div>
-            <div class="admin-card-actions" style="display:flex;gap:6px;align-items:center;">
-              <input type="number" id="admin-timeout-input" min="5" max="1440" step="5" value="30" class="admin-input-number">
-              <button class="btn-small btn-primary" id="admin-timeout-save">Guardar</button>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -414,20 +540,7 @@ export class AdminDashboard {
         </div>
       </div>
 
-      <!-- ============ TAB: SCANS ============ -->
-      <div class="admin-tab-content" id="admin-tab-scans">
-        <div class="admin-toolbar">
-          <select id="admin-scan-filter" class="admin-select">
-            <option value="">Todos</option>
-            <option value="special_needs">Necesidades especiales</option>
-            <option value="administration">Administración</option>
-            <option value="first_aid">Primeros auxilios</option>
-            <option value="unknown">Desconocidos</option>
-          </select>
-          <button class="btn-secondary btn-small" id="admin-refresh-scans">🔄 Actualizar</button>
-        </div>
-        <div id="admin-scans-list" class="admin-list"></div>
-      </div>
+      <!-- ============ TAB: ESCANEOS (eliminado: la info vive en Home) ============ -->
 
       <!-- Modal de confirmación -->
       <div class="modal-overlay hidden" id="admin-confirm-modal">
@@ -480,13 +593,14 @@ export class AdminDashboard {
         </div>
       </div>
 
-      <!-- Modal de agregar acceso -->
+      <!-- Modal de agregar/editar acceso (admite varios nombres) -->
       <div class="modal-overlay hidden" id="admin-access-modal">
         <div class="modal-box">
-          <div class="modal-header">Agregar nombre autorizado</div>
+          <div class="modal-header" id="admin-access-modal-title">Agregar nombres autorizados</div>
           <div class="form-group">
-            <label>Nombre</label>
-            <input type="text" id="admin-access-name" placeholder="Ej: Guardia 1" maxlength="32" class="input-plate" style="text-transform:none;letter-spacing:normal;text-align:center;font-weight:400;">
+            <label>Nombre(s)</label>
+            <input type="text" id="admin-access-name" placeholder="EJ: GUARDIA 1 GUARDIA 2" maxlength="200" class="input-name" autocomplete="off">
+            <p class="admin-card-sub" id="admin-access-hint">Para agregar varios, sepáralos con un espacio.</p>
           </div>
           <div class="modal-actions">
             <button class="btn-secondary btn-half" id="admin-access-cancel">Cancelar</button>
@@ -494,10 +608,26 @@ export class AdminDashboard {
           </div>
         </div>
       </div>
+
+      <!-- Modal de ajustes (logout automático) -->
+      <div class="modal-overlay hidden" id="admin-settings-modal">
+        <div class="modal-box">
+          <div class="modal-header">⚙️ Ajustes</div>
+          <div class="form-group">
+            <label>Logout automático (minutos)</label>
+            <input type="number" id="admin-timeout-input" min="5" max="1440" step="5" value="30" class="admin-input-number">
+            <p class="admin-card-sub">Tiempo sin actividad antes de liberar un nombre automáticamente.</p>
+          </div>
+          <div class="modal-actions">
+            <button class="btn-secondary btn-half" id="admin-settings-cancel">Cancelar</button>
+            <button class="btn-primary btn-half" id="admin-timeout-save">Guardar</button>
+          </div>
+        </div>
+      </div>
     `;
 
     // ⚡ FIX: Mover los modales al body para evitar anidamiento
-    ['admin-access-modal', 'admin-plate-modal', 'admin-confirm-modal'].forEach(id => {
+    ['admin-access-modal', 'admin-plate-modal', 'admin-confirm-modal', 'admin-settings-modal'].forEach(id => {
       const el = document.getElementById(id);
       if (el && el.parentElement !== document.body) {
         document.body.appendChild(el);
@@ -528,46 +658,6 @@ export class AdminDashboard {
   // ============================================================
   // USERS
   // ============================================================
-  async loadSessions() {
-    const { data, error } = await supabase.rpc('get_active_sessions');
-
-    // Las sesiones flotantes se muestran en dos lugares: el Home y la
-    // sub-vista "Flotantes" del tab Usuarios.
-    this.renderSessions(document.getElementById('admin-sessions-list'), data, error);
-    this.renderSessions(document.getElementById('admin-floating-sessions'), data, error);
-  }
-
-  renderSessions(list, data, error) {
-    if (!list) return;
-
-    if (error) {
-      list.innerHTML = `<div class="admin-error">Error: ${this.escapeHtml(error.message)}</div>`;
-      return;
-    }
-
-    if (!data?.length) {
-      list.innerHTML = '<div class="admin-empty">No hay sesiones activas</div>';
-      return;
-    }
-
-    list.innerHTML = data.map(s => {
-      const started = new Date(s.started_at);
-      const last = new Date(s.last_activity);
-      const diffMin = Math.round((Date.now() - last.getTime()) / 60000);
-      return `
-        <div class="admin-card">
-          <div class="admin-card-main">
-            <div class="admin-card-title">${this.escapeHtml(s.name)}</div>
-            <div class="admin-card-meta">
-              <span class="admin-date">Inicio: ${this.formatDate(s.started_at)}</span>
-              <span class="admin-date">Activo hace ${diffMin} min</span>
-            </div>
-          </div>
-        </div>
-      `;
-    }).join('');
-  }
-
   async loadRecentScans() {
     const list = document.getElementById('admin-recent-scans');
     if (!list) return;
@@ -1269,69 +1359,6 @@ export class AdminDashboard {
   }
 
   // ============================================================
-  // SCANS
-  // ============================================================
-  async loadScans(statusFilter = '') {
-    const list = document.getElementById('admin-scans-list');
-    if (!list) return;
-    list.innerHTML = '<div class="admin-loading">Cargando escaneos...</div>';
-
-    let query = supabase
-      .from('scan_history')
-      .select('*, users!inner(email, full_name)')
-      .order('created_at', { ascending: false })
-      .limit(100);
-
-    if (statusFilter) query = query.eq('status', statusFilter);
-
-    const { data, error } = await query;
-    if (error) {
-      // Fallback: si el join falla, intentar sin join
-      const { data: fallback, error: err2 } = await supabase
-        .from('scan_history')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(100);
-      if (err2) {
-        list.innerHTML = `<div class="admin-error">Error: ${this.escapeHtml(error.message)}</div>`;
-        return;
-      }
-      this.scansCache = fallback || [];
-    } else {
-      this.scansCache = data || [];
-    }
-
-    this.renderScans(this.scansCache);
-  }
-
-  renderScans(scans) {
-    const list = document.getElementById('admin-scans-list');
-    if (!list) return;
-
-    if (!scans.length) {
-      list.innerHTML = '<div class="admin-empty">No hay escaneos</div>';
-      return;
-    }
-
-    list.innerHTML = scans.map(s => {
-      const st = getScanStatus(s.status);
-      const userEmail = s.users?.email || 'Anónimo';
-      return `
-        <div class="admin-card">
-          <div class="admin-card-main">
-            <div class="admin-card-title mono">${this.escapeHtml(s.plate)}</div>
-            <div class="admin-card-sub">${this.escapeHtml(userEmail)}</div>
-            <div class="admin-card-meta">
-              <span class="plate-row-badge ${st.cls}">${st.label}</span>
-              <span class="admin-date">${this.formatDate(s.created_at)}</span>
-            </div>
-          </div>
-        </div>
-      `;
-    }).join('');
-  }
-
-  // ============================================================
   // EVENTOS
   // ============================================================
   bindEvents() {
@@ -1350,20 +1377,16 @@ export class AdminDashboard {
         // Cargar datos según la tab
         if (target === 'home') {
           await this.loadStats();
-          await this.loadSessions();
           await this.loadRecentScans();
         } else if (target === 'users') {
           // El tab unifica registrados y flotantes (accesos): cargar ambos.
           await this.loadUsers();
-          await this.loadSessions();
           await this.loadWhitelist();
-          await this.loadTimeoutConfig();
         } else if (target === 'plates') {
           await this.loadPlates();
           await this.loadPlateStats();
-        } else if (target === 'scans') {
-          await this.loadScans();
         }
+        // (La pestaña Escaneos se eliminó: esa info vive en Home)
       };
     });
 
@@ -1377,6 +1400,8 @@ export class AdminDashboard {
         parent.querySelectorAll('.admin-subtab-content').forEach(c => {
           c.classList.toggle('active', c.id === `admin-subtab-${btn.dataset.subtab}`);
         });
+        // Al abrir Flotantes se refresca la lista unificada
+        if (btn.dataset.subtab === 'users-floating') this.loadWhitelist();
       });
     });
 
@@ -1421,15 +1446,7 @@ export class AdminDashboard {
       });
     }
 
-    // Filtro de escaneos
-    const scanFilter = document.getElementById('admin-scan-filter');
-    if (scanFilter) {
-      scanFilter.addEventListener('change', () => this.loadScans(scanFilter.value));
-    }
-    const refreshScans = document.getElementById('admin-refresh-scans');
-    if (refreshScans) {
-      refreshScans.addEventListener('click', () => this.loadScans(scanFilter?.value || ''));
-    }
+    // (La pestaña Escaneos fue eliminada: la info está en Home)
 
     // Botón "Agregar patente"
     const addPlate = document.getElementById('admin-add-plate');
@@ -1553,21 +1570,54 @@ export class AdminDashboard {
         window.navigate('profile');
       });
     }
-        // Tab de accesos
+        // Tab de accesos (lista unificada de flotantes)
     document.getElementById('admin-add-access')?.addEventListener('click', () => this.openAccessModal());
     document.getElementById('admin-access-save')?.addEventListener('click', () => this.saveAccess());
     document.getElementById('admin-access-cancel')?.addEventListener('click', () => {
+      this._editingAccessId = null;
       document.getElementById('admin-access-modal')?.classList.add('hidden');
+    });
+    // Enter en el modal de acceso = guardar
+    document.getElementById('admin-access-name')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); this.saveAccess(); }
+    });
+
+    // Ajustes (logout automático): abre el modal con el valor actual
+    document.getElementById('admin-settings-btn')?.addEventListener('click', async () => {
+      await this.loadTimeoutConfig();
+      document.getElementById('admin-settings-modal')?.classList.remove('hidden');
+      document.getElementById('admin-timeout-input')?.focus();
+    });
+    document.getElementById('admin-settings-cancel')?.addEventListener('click', () => {
+      document.getElementById('admin-settings-modal')?.classList.add('hidden');
     });
     document.getElementById('admin-timeout-save')?.addEventListener('click', () => this.saveTimeoutConfig());
 
-    // Delegación para force-logout y remove-access
+    // Checkbox "Activar todos"
+    document.getElementById('admin-check-all')?.addEventListener('change', (e) => {
+      this.setAllActive(e.target.checked);
+    });
+
+    // Delegación de acciones de la lista unificada de flotantes
     document.getElementById('view-admin')?.addEventListener('click', async (e) => {
       const btn = e.target.closest('[data-action]');
       if (!btn) return;
       const action = btn.dataset.action;
-      if (action === 'force-logout') await this.forceLogout(btn.dataset.name);
-      else if (action === 'remove-access') await this.removeAccess(btn.dataset.id, btn.dataset.name);
+
+      if (action === 'force-logout') {
+        await this.forceLogout(btn.dataset.name);
+      } else if (action === 'remove-access') {
+        await this.removeAccess(btn.dataset.id, btn.dataset.name);
+      } else if (action === 'toggle-active') {
+        await this.toggleActive(btn.dataset.id, btn.checked);
+      } else if (action === 'row-menu') {
+        // Muestra/oculta los botones Editar y Borrar de la fila
+        const row = btn.closest('.pill-row');
+        row?.querySelector('.pill-actions')?.classList.toggle('hidden');
+      } else if (action === 'edit-access') {
+        const row = btn.closest('.pill-row');
+        if (row) this.openAccessModal({ id: row.dataset.id, name: row.dataset.name });
+      }
     });
   }
 
